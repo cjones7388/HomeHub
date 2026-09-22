@@ -1,6 +1,8 @@
 
 package com.example.homehub
-
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.text.input.KeyboardType
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -1830,6 +1832,15 @@ fun ReceiptsScreen(
             .toList()
             .takeLast(30)
 
+    val historyListState = rememberLazyListState()
+
+    LaunchedEffect(transactions.size) {
+        if (recentTransactionIndices.isNotEmpty()) {
+            historyListState.animateScrollToItem(
+                recentTransactionIndices.lastIndex
+            )
+        }
+    }
 
     val textFieldColors =
         OutlinedTextFieldDefaults.colors(
@@ -1983,29 +1994,19 @@ fun ReceiptsScreen(
 
 
         OutlinedTextField(
-            value =
-                descriptionText,
-
+            value = descriptionText,
             onValueChange = { newText ->
-
-                descriptionText =
-                    newText
+                descriptionText = newText
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            singleLine =
-                true,
-
-            keyboardOptions =
-                KeyboardOptions(
-                    capitalization =
-                        KeyboardCapitalization.Sentences
-                ),
-
-            colors =
-                textFieldColors
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = {
+                Text("Description")
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Sentences
+            ),
+            colors = textFieldColors
         )
 
 
@@ -2016,35 +2017,22 @@ fun ReceiptsScreen(
 
 
         OutlinedTextField(
-            value =
-                amountText,
-
+            value = amountText,
             onValueChange = {
                 amountText = it
-                    .replace(
-                        "£",
-                        ""
-                    )
-                    .replace(
-                        "+",
-                        ""
-                    )
-                    .replace(
-                        "-",
-                        ""
-                    )
+                    .replace("£", "")
+                    .replace("+", "")
+                    .replace("-", "")
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
-
-
-            singleLine =
-                true,
-
-            colors =
-                textFieldColors
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = {
+                Text("Amount")
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number
+            ),
+            colors = textFieldColors
         )
 
 
@@ -2329,13 +2317,11 @@ fun ReceiptsScreen(
         } else {
 
             LazyColumn(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(2f),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(8.dp)
+                state = historyListState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(2f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
 
                 items(
