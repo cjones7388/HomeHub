@@ -1,3 +1,4 @@
+
 package com.example.homehub
 
 import android.content.ActivityNotFoundException
@@ -7,8 +8,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -26,15 +27,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,8 +48,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
@@ -67,6 +76,35 @@ private const val TARGET_SHEET_ID =
 
 private const val SHEETS_SCOPE =
     "https://www.googleapis.com/auth/spreadsheets.readonly"
+
+
+/* -------------------------------------------------- */
+/* HOMEHUB COLOURS                                   */
+/* -------------------------------------------------- */
+
+private val HOMEHUB_BACKGROUND =
+    Color(0xFF355B97)
+
+private val HOMEHUB_PRIMARY =
+    Color(0xFF183D6B)
+
+private val HOMEHUB_SECONDARY =
+    Color(0xFFDCE6F5)
+
+private val HOMEHUB_TEXT =
+    Color(0xFF1C1C1C)
+
+private val HOMEHUB_OUTLINE =
+    Color(0xFFB8C7DD)
+
+private val HOMEHUB_INCOME =
+    Color(0xFF2E7D5B)
+
+private val HOMEHUB_OUTGOING =
+    Color(0xFFB94242)
+
+private val HOMEHUB_SURFACE_VARIANT =
+    Color(0xFFE8EEF7)
 
 
 data class Bill(
@@ -714,6 +752,56 @@ fun HomeHubApp(
     }
 
 
+    val homeHubColors =
+        lightColorScheme(
+
+            primary =
+                HOMEHUB_PRIMARY,
+
+            onPrimary =
+                Color.White,
+
+            secondary =
+                HOMEHUB_SECONDARY,
+
+            onSecondary =
+                HOMEHUB_PRIMARY,
+
+            tertiary =
+                HOMEHUB_INCOME,
+
+            onTertiary =
+                Color.White,
+
+            background =
+                HOMEHUB_BACKGROUND,
+
+            onBackground =
+                Color.White,
+
+            surface =
+                Color.White,
+
+            onSurface =
+                HOMEHUB_TEXT,
+
+            surfaceVariant =
+                HOMEHUB_SURFACE_VARIANT,
+
+            onSurfaceVariant =
+                HOMEHUB_TEXT,
+
+            outline =
+                HOMEHUB_OUTLINE,
+
+            error =
+                HOMEHUB_OUTGOING,
+
+            onError =
+                Color.White
+        )
+
+
     BackHandler(
         enabled =
             currentScreen != "home"
@@ -724,76 +812,91 @@ fun HomeHubApp(
     }
 
 
-    MaterialTheme {
+    MaterialTheme(
+        colorScheme =
+            homeHubColors
+    ) {
 
-        when (currentScreen) {
+        Surface(
+            modifier =
+                Modifier.fillMaxSize(),
 
-            "home" -> {
+            color =
+                HOMEHUB_BACKGROUND,
 
-                HomeScreen(
-                    onBillsClick = {
-                        currentScreen =
-                            "bills"
-                    },
+            contentColor =
+                Color.White
+        ) {
 
-                    onNotesClick = {
-                        currentScreen =
-                            "notes"
-                    },
+            when (currentScreen) {
 
-                    onReceiptsClick = {
-                        currentScreen =
-                            "receipts"
-                    }
-                )
-            }
+                "home" -> {
 
+                    HomeScreen(
+                        onBillsClick = {
+                            currentScreen =
+                                "bills"
+                        },
 
-            "bills" -> {
+                        onNotesClick = {
+                            currentScreen =
+                                "notes"
+                        },
 
-                BillsScreen(
-                    onBack = {
-                        currentScreen =
-                            "home"
-                    },
-
-                    googleConnected =
-                        googleConnected,
-
-                    loading =
-                        loading,
-
-                    sheetStatus =
-                        sheetStatus,
-
-                    thisWeeksBills =
-                        thisWeeksBills,
-
-                    onConnectGoogle =
-                        onConnectGoogle
-                )
-            }
+                        onReceiptsClick = {
+                            currentScreen =
+                                "receipts"
+                        }
+                    )
+                }
 
 
-            "notes" -> {
+                "bills" -> {
 
-                NotesScreen(
-                    onBack = {
-                        currentScreen =
-                            "home"
-                    }
-                )
-            }
+                    BillsScreen(
+                        onBack = {
+                            currentScreen =
+                                "home"
+                        },
+
+                        googleConnected =
+                            googleConnected,
+
+                        loading =
+                            loading,
+
+                        sheetStatus =
+                            sheetStatus,
+
+                        thisWeeksBills =
+                            thisWeeksBills,
+
+                        onConnectGoogle =
+                            onConnectGoogle
+                    )
+                }
 
 
-            "receipts" -> {
+                "notes" -> {
 
-                ReceiptsScreen(
-                    onBack = {
-                        currentScreen =
-                            "home"
-                    }
-                )
+                    NotesScreen(
+                        onBack = {
+                            currentScreen =
+                                "home"
+                        }
+                    )
+                }
+
+
+                "receipts" -> {
+
+                    ReceiptsScreen(
+                        onBack = {
+                            currentScreen =
+                                "home"
+                        }
+                    )
+                }
             }
         }
     }
@@ -815,41 +918,33 @@ fun HomeScreen(
         modifier =
             Modifier
                 .fillMaxSize()
+                .navigationBarsPadding()
                 .padding(20.dp),
 
         verticalArrangement =
-            Arrangement.spacedBy(16.dp)
+            Arrangement.Center
     ) {
 
-        Spacer(
-            modifier =
-                Modifier.height(20.dp)
-        )
+        Text(
+            text =
+                "HomeHub",
 
+            style =
+                MaterialTheme
+                    .typography
+                    .headlineLarge,
 
-        Row(
             modifier =
                 Modifier.fillMaxWidth(),
 
-            horizontalArrangement =
-                Arrangement.Center
-        ) {
-
-            Text(
-                text =
-                    "HomeHub",
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .headlineLarge
-            )
-        }
+            textAlign =
+                TextAlign.Center
+        )
 
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(24.dp)
         )
 
 
@@ -868,6 +963,12 @@ fun HomeScreen(
         )
 
 
+        Spacer(
+            modifier =
+                Modifier.height(16.dp)
+        )
+
+
         HomeCard(
             emoji =
                 "📝",
@@ -880,6 +981,12 @@ fun HomeScreen(
 
             onClick =
                 onNotesClick
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(16.dp)
         )
 
 
@@ -900,19 +1007,11 @@ fun HomeScreen(
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(24.dp)
         )
 
 
-        Text(
-            text =
-                "More features coming soon",
 
-            style =
-                MaterialTheme
-                    .typography
-                    .bodyMedium
-        )
     }
 }
 
@@ -939,6 +1038,15 @@ fun HomeCard(
 
         shape =
             RoundedCornerShape(20.dp),
+
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    Color.White,
+
+                contentColor =
+                    HOMEHUB_TEXT
+            ),
 
         elevation =
             CardDefaults.cardElevation(
@@ -1011,13 +1119,15 @@ fun HomeCard(
 
 
             Text(
-                text =
-                    "›",
+                text = "→",
 
                 style =
                     MaterialTheme
                         .typography
-                        .headlineMedium
+                        .headlineMedium,
+
+                fontWeight =
+                    androidx.compose.ui.text.font.FontWeight.Bold
             )
         }
     }
@@ -1052,7 +1162,10 @@ fun ScreenBackButton(
             style =
                 MaterialTheme
                     .typography
-                    .displayLarge
+                    .displayLarge,
+
+            color =
+                Color.White
         )
     }
 }
@@ -1080,6 +1193,7 @@ fun BillsScreen(
         modifier =
             Modifier
                 .fillMaxSize()
+                .navigationBarsPadding()
                 .padding(20.dp)
     ) {
 
@@ -1205,7 +1319,7 @@ fun BillsScreen(
                             googleConnected
                         ) {
 
-                            "REFRESH THIS WEEK's BILLS"
+                            "REFRESH THIS WEEK'S BILLS"
 
                         } else {
 
@@ -1378,6 +1492,15 @@ fun BillRow(
 
         shape =
             RoundedCornerShape(14.dp),
+
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    Color.White,
+
+                contentColor =
+                    HOMEHUB_TEXT
+            ),
 
         elevation =
             CardDefaults.cardElevation(
@@ -1657,6 +1780,7 @@ fun ReceiptsScreen(
     val context =
         LocalContext.current
 
+
     val keyboardController =
         LocalSoftwareKeyboardController.current
 
@@ -1702,6 +1826,41 @@ fun ReceiptsScreen(
             .indices
             .toList()
             .takeLast(30)
+
+
+    val textFieldColors =
+        OutlinedTextFieldDefaults.colors(
+
+            focusedContainerColor =
+                Color.White,
+
+            unfocusedContainerColor =
+                Color.White,
+
+            disabledContainerColor =
+                Color.White,
+
+            focusedTextColor =
+                HOMEHUB_TEXT,
+
+            unfocusedTextColor =
+                HOMEHUB_TEXT,
+
+            focusedBorderColor =
+                HOMEHUB_PRIMARY,
+
+            unfocusedBorderColor =
+                HOMEHUB_OUTLINE,
+
+            focusedLabelColor =
+                HOMEHUB_PRIMARY,
+
+            unfocusedLabelColor =
+                HOMEHUB_TEXT,
+
+            cursorColor =
+                HOMEHUB_PRIMARY
+        )
 
 
     Column(
@@ -1756,6 +1915,15 @@ fun ReceiptsScreen(
 
             shape =
                 RoundedCornerShape(14.dp),
+
+            colors =
+                CardDefaults.cardColors(
+                    containerColor =
+                        Color.White,
+
+                    contentColor =
+                        HOMEHUB_TEXT
+                ),
 
             elevation =
                 CardDefaults.cardElevation(
@@ -1818,29 +1986,7 @@ fun ReceiptsScreen(
             onValueChange = { newText ->
 
                 descriptionText =
-                    if (
-                        newText.isNotEmpty()
-                    ) {
-
-                        newText
-                            .replaceFirstChar {
-
-                                if (
-                                    it.isLowerCase()
-                                ) {
-
-                                    it.titlecase()
-
-                                } else {
-
-                                    it.toString()
-                                }
-                            }
-
-                    } else {
-
-                        newText
-                    }
+                    newText
             },
 
             modifier =
@@ -1854,7 +2000,16 @@ fun ReceiptsScreen(
             },
 
             singleLine =
-                true
+                true,
+
+            keyboardOptions =
+                KeyboardOptions(
+                    capitalization =
+                        KeyboardCapitalization.Sentences
+                ),
+
+            colors =
+                textFieldColors
         )
 
 
@@ -1895,7 +2050,10 @@ fun ReceiptsScreen(
             },
 
             singleLine =
-                true
+                true,
+
+            colors =
+                textFieldColors
         )
 
 
@@ -1921,7 +2079,35 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .weight(1f)
-                        .height(50.dp)
+                        .height(50.dp),
+
+                colors =
+                    ButtonDefaults.buttonColors(
+
+                        containerColor =
+                            if (
+                                moneyOutSelected
+                            ) {
+
+                                HOMEHUB_OUTGOING
+
+                            } else {
+
+                                HOMEHUB_SECONDARY
+                            },
+
+                        contentColor =
+                            if (
+                                moneyOutSelected
+                            ) {
+
+                                Color.White
+
+                            } else {
+
+                                HOMEHUB_PRIMARY
+                            }
+                    )
             ) {
 
                 Text(
@@ -1948,7 +2134,35 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .weight(1f)
-                        .height(50.dp)
+                        .height(50.dp),
+
+                colors =
+                    ButtonDefaults.buttonColors(
+
+                        containerColor =
+                            if (
+                                !moneyOutSelected
+                            ) {
+
+                                HOMEHUB_INCOME
+
+                            } else {
+
+                                HOMEHUB_SECONDARY
+                            },
+
+                        contentColor =
+                            if (
+                                !moneyOutSelected
+                            ) {
+
+                                Color.White
+
+                            } else {
+
+                                HOMEHUB_PRIMARY
+                            }
+                    )
             ) {
 
                 Text(
@@ -2316,6 +2530,15 @@ fun AccountTransactionRow(
         shape =
             RoundedCornerShape(14.dp),
 
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    Color.White,
+
+                contentColor =
+                    HOMEHUB_TEXT
+            ),
+
         elevation =
             CardDefaults.cardElevation(
                 defaultElevation = 2.dp
@@ -2362,7 +2585,19 @@ fun AccountTransactionRow(
                         style =
                             MaterialTheme
                                 .typography
-                                .bodyLarge
+                                .bodyLarge,
+
+                        color =
+                            if (
+                                transaction.amount >= 0
+                            ) {
+
+                                HOMEHUB_INCOME
+
+                            } else {
+
+                                HOMEHUB_OUTGOING
+                            }
                     )
                 }
 
@@ -2409,7 +2644,13 @@ fun AccountTransactionRow(
                     onDelete,
 
                 modifier =
-                    Modifier.fillMaxWidth()
+                    Modifier.fillMaxWidth(),
+
+                colors =
+                    ButtonDefaults.textButtonColors(
+                        contentColor =
+                            HOMEHUB_OUTGOING
+                    )
             ) {
 
                 Text(
@@ -2590,6 +2831,41 @@ fun NotesScreen(
     }
 
 
+    val textFieldColors =
+        OutlinedTextFieldDefaults.colors(
+
+            focusedContainerColor =
+                Color.White,
+
+            unfocusedContainerColor =
+                Color.White,
+
+            disabledContainerColor =
+                Color.White,
+
+            focusedTextColor =
+                HOMEHUB_TEXT,
+
+            unfocusedTextColor =
+                HOMEHUB_TEXT,
+
+            focusedBorderColor =
+                HOMEHUB_PRIMARY,
+
+            unfocusedBorderColor =
+                HOMEHUB_OUTLINE,
+
+            focusedLabelColor =
+                HOMEHUB_PRIMARY,
+
+            unfocusedLabelColor =
+                HOMEHUB_TEXT,
+
+            cursorColor =
+                HOMEHUB_PRIMARY
+        )
+
+
     Column(
         modifier =
             Modifier
@@ -2642,7 +2918,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2666,7 +2945,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2690,7 +2972,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2714,7 +2999,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2738,7 +3026,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2762,7 +3053,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2786,7 +3080,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
 
@@ -2810,7 +3107,10 @@ fun NotesScreen(
                                 it
                             )
                             .apply()
-                    }
+                    },
+
+                    textFieldColors =
+                        textFieldColors
                 )
             }
         }
@@ -2932,7 +3232,9 @@ fun NotesScreen(
 fun NoteEntry(
     label: String,
     text: String,
-    onTextChange: (String) -> Unit
+    onTextChange: (String) -> Unit,
+    textFieldColors:
+    androidx.compose.material3.TextFieldColors
 ) {
 
     Row(
@@ -2951,6 +3253,9 @@ fun NoteEntry(
                 MaterialTheme
                     .typography
                     .titleMedium,
+
+            color =
+                Color.White,
 
             modifier =
                 Modifier
@@ -3012,7 +3317,10 @@ fun NoteEntry(
                 false,
 
             maxLines =
-                3
+                3,
+
+            colors =
+                textFieldColors
         )
     }
 }
