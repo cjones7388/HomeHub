@@ -8,10 +8,12 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -270,11 +272,6 @@ class MainActivity : ComponentActivity() {
 
                 try {
 
-                    /*
-                     * Find the correct Google Sheets tab
-                     * using its numeric sheet ID.
-                     */
-
                     val spreadsheetUrl =
                         "https://sheets.googleapis.com/v4/" +
                                 "spreadsheets/$SPREADSHEET_ID" +
@@ -346,13 +343,11 @@ class MainActivity : ComponentActivity() {
 
 
                     /*
-                     * Read columns A:E.
-                     *
                      * A = Bill name
                      * B = Direct Debit day
                      * C = Rate
-                     * D = Unit
-                     * E = Cost
+                     * D = Unit - ignored
+                     * E = Cost - ignored
                      */
 
                     val range =
@@ -394,13 +389,6 @@ class MainActivity : ComponentActivity() {
                         mutableListOf<Bill>()
 
 
-                    /*
-                     * These categories are not household
-                     * bills and are deliberately excluded.
-                     *
-                     * Matching is case-insensitive.
-                     */
-
                     val excludedCategories =
                         setOf(
                             "food",
@@ -421,18 +409,8 @@ class MainActivity : ComponentActivity() {
                                 rows.getJSONArray(i)
 
 
-                            /*
-                             * We need:
-                             *
-                             * A = Bill name
-                             * B = Direct Debit day
-                             *
-                             * Column D (Unit) is completely
-                             * ignored.
-                             */
-
                             if (
-                                row.length() < 2
+                                row.length() < 3
                             ) {
                                 continue
                             }
@@ -448,11 +426,6 @@ class MainActivity : ComponentActivity() {
                                     .trim()
 
 
-                            /*
-                             * Ignore Food, Going out
-                             * and Travelling.
-                             */
-
                             if (
                                 excludedCategories.contains(
                                     name.lowercase()
@@ -464,36 +437,18 @@ class MainActivity : ComponentActivity() {
 
 
                             /*
-                             * Column E = Cost.
+                             * Column C = Rate.
                              *
-                             * This is ALWAYS the amount
-                             * reported by HomeHub.
+                             * This is the amount HomeHub
+                             * reports.
                              *
-                             * Unit does not matter.
+                             * Unit and Cost are ignored.
                              */
 
                             val amountText =
-                                if (
-                                    row.length() > 2
-                                ) {
+                                row.optString(2)
+                                    .trim()
 
-                                    // Column C = Rate
-                                    // This is the amount HomeHub reports.
-                                    // Column D (Unit) and Column E (Cost) are ignored.
-
-                                    row.optString(2)
-                                        .trim()
-
-                                } else {
-
-                                    ""
-                                }
-
-                            /*
-                             * A missing Cost field is ignored.
-                             *
-                             * £0.00 IS VALID and is included.
-                             */
 
                             if (
                                 name.isBlank() ||
@@ -534,11 +489,6 @@ class MainActivity : ComponentActivity() {
                             }
 
 
-                            /*
-                             * Find this month's occurrence
-                             * of the bill.
-                             */
-
                             val today =
                                 LocalDate.now()
 
@@ -548,11 +498,6 @@ class MainActivity : ComponentActivity() {
                                     .withDayOfMonth(1)
                                     .lengthOfMonth()
 
-
-                            /*
-                             * If the due day doesn't exist
-                             * in this month, ignore it.
-                             */
 
                             if (
                                 dueDay > lastDay
@@ -589,11 +534,6 @@ class MainActivity : ComponentActivity() {
                     }
 
 
-                    /*
-                     * Work out Monday -> Sunday
-                     * for the current week.
-                     */
-
                     val today =
                         LocalDate.now()
 
@@ -607,11 +547,6 @@ class MainActivity : ComponentActivity() {
                     val sunday =
                         monday.plusDays(6)
 
-
-                    /*
-                     * Only bills whose due date falls
-                     * between Monday and Sunday are shown.
-                     */
 
                     val weeklyBills =
                         bills
@@ -628,11 +563,6 @@ class MainActivity : ComponentActivity() {
                                 it.dueDate
                             }
 
-
-                    /*
-                     * The total is calculated from
-                     * Column E (Cost).
-                     */
 
                     val total =
                         weeklyBills.sumOf {
@@ -786,6 +716,24 @@ fun HomeHubApp(
 
     var currentScreen by remember {
         mutableStateOf("home")
+    }
+
+
+    /*
+     * Samsung/Android system Back button.
+     *
+     * If we're inside Bills or Notes, go back Home.
+     * If we're already Home, Android handles the normal
+     * back behaviour and closes the app.
+     */
+
+    BackHandler(
+        enabled =
+            currentScreen != "home"
+    ) {
+
+        currentScreen =
+            "home"
     }
 
 
@@ -1060,6 +1008,40 @@ fun HomeCard(
 
 
 /* -------------------------------------------------- */
+/* BACK BUTTON                                        */
+/* -------------------------------------------------- */
+
+@Composable
+fun ScreenBackButton(
+    onBack: () -> Unit
+) {
+
+    Box(
+        modifier =
+            Modifier
+                .size(56.dp)
+                .clickable {
+                    onBack()
+                },
+
+        contentAlignment =
+            Alignment.Center
+    ) {
+
+        Text(
+            text =
+                "←",
+
+            style =
+                MaterialTheme
+                    .typography
+                    .headlineLarge
+        )
+    }
+}
+
+
+/* -------------------------------------------------- */
 /* BILLS SCREEN                                       */
 /* -------------------------------------------------- */
 
@@ -1084,44 +1066,55 @@ fun BillsScreen(
                 .padding(20.dp)
     ) {
 
-        Text(
-            text =
-                "‹  Bills",
+        /*
+         * Large, easy-to-hit back button.
+         */
 
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineLarge,
-
-            modifier =
-                Modifier.clickable {
-                    onBack()
-                }
+        ScreenBackButton(
+            onBack =
+                onBack
         )
 
 
         Spacer(
             modifier =
-                Modifier.height(25.dp)
+                Modifier.height(10.dp)
         )
 
 
-        Text(
-            text =
-                "💷",
+        /*
+         * Large centred money emoji.
+         */
 
-            style =
-                MaterialTheme
-                    .typography
-                    .displaySmall
-        )
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            horizontalArrangement =
+                Arrangement.Center
+        ) {
+
+            Text(
+                text =
+                    "💷",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .displayLarge
+            )
+        }
 
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(12.dp)
         )
 
+
+        /*
+         * Centred Household Bills heading.
+         */
 
         Text(
             text =
@@ -1130,30 +1123,19 @@ fun BillsScreen(
             style =
                 MaterialTheme
                     .typography
-                    .headlineMedium
+                    .headlineMedium,
+
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            textAlign =
+                androidx.compose.ui.text.style.TextAlign.Center
         )
 
 
         Spacer(
             modifier =
-                Modifier.height(6.dp)
-        )
-
-
-        Text(
-            text =
-                "Bills - Google Sheets",
-
-            style =
-                MaterialTheme
-                    .typography
-                    .titleMedium
-        )
-
-
-        Spacer(
-            modifier =
-                Modifier.height(20.dp)
+                Modifier.height(25.dp)
         )
 
 
@@ -1218,7 +1200,7 @@ fun BillsScreen(
 
                         } else {
 
-                            "THIS WEEK'S BILLS"
+                            "LOAD THIS WEEK'S BILLS"
                         }
                 )
             }
@@ -1265,7 +1247,6 @@ fun BillsScreen(
         }
     }
 }
-
 
 /* -------------------------------------------------- */
 /* THIS WEEK'S BILLS                                  */
@@ -1552,25 +1533,20 @@ fun NotesScreen(
                 .padding(20.dp)
     ) {
 
-        Text(
-            text =
-                "‹  Notes",
+        /*
+         * Large, easy-to-hit back button.
+         * No "Notes" text beside it.
+         */
 
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineLarge,
-
-            modifier =
-                Modifier.clickable {
-                    onBack()
-                }
+        ScreenBackButton(
+            onBack =
+                onBack
         )
 
 
         Spacer(
             modifier =
-                Modifier.height(30.dp)
+                Modifier.height(20.dp)
         )
 
 
