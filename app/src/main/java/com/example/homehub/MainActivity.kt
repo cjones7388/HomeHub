@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
@@ -1656,14 +1657,8 @@ fun ReceiptsScreen(
     val context =
         LocalContext.current
 
-
-    val preferences =
-        remember {
-            context.getSharedPreferences(
-                RECEIPTS_PREFS,
-                Context.MODE_PRIVATE
-            )
-        }
+    val keyboardController =
+        LocalSoftwareKeyboardController.current
 
 
     var transactions by remember {
@@ -1705,8 +1700,8 @@ fun ReceiptsScreen(
     val recentTransactionIndices =
         transactions
             .indices
-            .reversed()
-            .take(30)
+            .toList()
+            .takeLast(30)
 
 
     Column(
@@ -1820,8 +1815,32 @@ fun ReceiptsScreen(
             value =
                 descriptionText,
 
-            onValueChange = {
-                descriptionText = it
+            onValueChange = { newText ->
+
+                descriptionText =
+                    if (
+                        newText.isNotEmpty()
+                    ) {
+
+                        newText
+                            .replaceFirstChar {
+
+                                if (
+                                    it.isLowerCase()
+                                ) {
+
+                                    it.titlecase()
+
+                                } else {
+
+                                    it.toString()
+                                }
+                            }
+
+                    } else {
+
+                        newText
+                    }
             },
 
             modifier =
@@ -2023,6 +2042,9 @@ fun ReceiptsScreen(
 
                     amountText =
                         ""
+
+
+                    keyboardController?.hide()
                 }
             },
 
@@ -2226,7 +2248,11 @@ fun ReceiptsScreen(
                 TextButton(
                     onClick = {
 
-                        preferences
+                        context
+                            .getSharedPreferences(
+                                RECEIPTS_PREFS,
+                                Context.MODE_PRIVATE
+                            )
                             .edit()
                             .clear()
                             .apply()
