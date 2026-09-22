@@ -48,6 +48,7 @@ import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -72,6 +73,12 @@ data class Bill(
     val dueDay: Int,
     val amount: Double,
     val dueDate: LocalDate
+)
+
+
+data class AccountTransaction(
+    val description: String,
+    val amount: Double
 )
 
 
@@ -731,6 +738,11 @@ fun HomeHubApp(
                     onNotesClick = {
                         currentScreen =
                             "notes"
+                    },
+
+                    onReceiptsClick = {
+                        currentScreen =
+                            "receipts"
                     }
                 )
             }
@@ -771,6 +783,17 @@ fun HomeHubApp(
                     }
                 )
             }
+
+
+            "receipts" -> {
+
+                ReceiptsScreen(
+                    onBack = {
+                        currentScreen =
+                            "home"
+                    }
+                )
+            }
         }
     }
 }
@@ -783,7 +806,8 @@ fun HomeHubApp(
 @Composable
 fun HomeScreen(
     onBillsClick: () -> Unit,
-    onNotesClick: () -> Unit
+    onNotesClick: () -> Unit,
+    onReceiptsClick: () -> Unit
 ) {
 
     Column(
@@ -855,6 +879,21 @@ fun HomeScreen(
 
             onClick =
                 onNotesClick
+        )
+
+
+        HomeCard(
+            emoji =
+                "🧾",
+
+            title =
+                "Receipts",
+
+            description =
+                "Track your current account balance",
+
+            onClick =
+                onReceiptsClick
         )
 
 
@@ -1484,6 +1523,1052 @@ fun formatMoney(
                 "%.2f",
                 amount
             )
+}
+
+
+/* -------------------------------------------------- */
+/* RECEIPTS STORAGE                                   */
+/* -------------------------------------------------- */
+
+private const val RECEIPTS_PREFS =
+    "homehub_receipts"
+
+private const val INITIAL_BALANCE_KEY =
+    "initial_balance"
+
+private const val TRANSACTIONS_KEY =
+    "transactions"
+
+
+data class StoredTransaction(
+    val description: String,
+    val amount: Double
+)
+
+
+fun loadTransactions(
+    context: Context
+): MutableList<AccountTransaction> {
+
+    val preferences =
+        context.getSharedPreferences(
+            RECEIPTS_PREFS,
+            Context.MODE_PRIVATE
+        )
+
+
+    val jsonText =
+        preferences.getString(
+            TRANSACTIONS_KEY,
+            "[]"
+        ) ?: "[]"
+
+
+    val transactions =
+        mutableListOf<AccountTransaction>()
+
+
+    try {
+
+        val array =
+            JSONArray(
+                jsonText
+            )
+
+
+        for (
+        i in 0 until array.length()
+        ) {
+
+            val item =
+                array.getJSONObject(i)
+
+
+            transactions.add(
+                AccountTransaction(
+                    description =
+                        item.getString(
+                            "description"
+                        ),
+
+                    amount =
+                        item.getDouble(
+                            "amount"
+                        )
+                )
+            )
+        }
+
+    } catch (
+        e: Exception
+    ) {
+
+        return mutableListOf()
+    }
+
+
+    return transactions
+}
+
+
+fun saveTransactions(
+    context: Context,
+    transactions: List<AccountTransaction>
+) {
+
+    val array =
+        JSONArray()
+
+
+    transactions.forEach { transaction ->
+
+        array.put(
+            JSONObject().apply {
+
+                put(
+                    "description",
+                    transaction.description
+                )
+
+                put(
+                    "amount",
+                    transaction.amount
+                )
+            }
+        )
+    }
+
+
+    context
+        .getSharedPreferences(
+            RECEIPTS_PREFS,
+            Context.MODE_PRIVATE
+        )
+        .edit()
+        .putString(
+            TRANSACTIONS_KEY,
+            array.toString()
+        )
+        .apply()
+}
+
+
+/* -------------------------------------------------- */
+/* RECEIPTS SCREEN                                    */
+/* -------------------------------------------------- */
+
+@Composable
+fun ReceiptsScreen(
+    onBack: () -> Unit
+) {
+
+    val context =
+        LocalContext.current
+
+
+    val preferences =
+        remember {
+            context.getSharedPreferences(
+                RECEIPTS_PREFS,
+                Context.MODE_PRIVATE
+            )
+        }
+
+
+    var initialBalanceText by remember {
+
+        mutableStateOf(
+            if (
+                preferences.contains(
+                    INITIAL_BALANCE_KEY
+                )
+            ) {
+
+                formatMoney(
+                    preferences.getFloat(
+                        INITIAL_BALANCE_KEY,
+                        0f
+                    ).toDouble()
+                )
+
+            } else {
+
+                ""
+            }
+        )
+    }
+
+
+    var transactions by remember {
+
+        mutableStateOf(
+            loadTransactions(
+                context
+            ).toList()
+        )
+    }
+
+
+    var descriptionText by remember {
+        mutableStateOf("")
+    }
+
+
+    var amountText by remember {
+        mutableStateOf("")
+    }
+
+
+    var moneyOutSelected by remember {
+        mutableStateOf(true)
+    }
+
+
+    var showResetDialog by remember {
+        mutableStateOf(false)
+    }
+
+
+    val initialBalance =
+        preferences
+            .getFloat(
+                INITIAL_BALANCE_KEY,
+                0f
+            )
+            .toDouble()
+
+
+    val runningBalance =
+        initialBalance +
+                transactions.sumOf {
+                    it.amount
+                }
+
+
+    val recentTransactionIndices =
+        transactions
+            .indices
+            .reversed()
+            .take(30)
+
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .padding(20.dp)
+    ) {
+
+        ScreenBackButton(
+            onBack =
+                onBack
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(4.dp)
+        )
+
+
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            horizontalArrangement =
+                Arrangement.Center
+        ) {
+
+            Text(
+                text =
+                    "🧾",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .displayLarge
+            )
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(4.dp)
+        )
+
+
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            horizontalArrangement =
+                Arrangement.Center
+        ) {
+
+            Text(
+                text =
+                    "Receipts",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .headlineMedium
+            )
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(15.dp)
+        )
+
+
+        Card(
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            shape =
+                RoundedCornerShape(16.dp),
+
+            elevation =
+                CardDefaults.cardElevation(
+                    defaultElevation = 3.dp
+                )
+        ) {
+
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+
+                horizontalAlignment =
+                    Alignment.CenterHorizontally
+            ) {
+
+                Text(
+                    text =
+                        "CURRENT ACCOUNT BALANCE",
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .labelLarge
+                )
+
+
+                Spacer(
+                    modifier =
+                        Modifier.height(4.dp)
+                )
+
+
+                Text(
+                    text =
+                        formatMoney(
+                            runningBalance
+                        ),
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .displaySmall
+                )
+            }
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(15.dp)
+        )
+
+
+        if (
+            !preferences.contains(
+                INITIAL_BALANCE_KEY
+            )
+        ) {
+
+            OutlinedTextField(
+                value =
+                    initialBalanceText,
+
+                onValueChange = {
+                    initialBalanceText = it
+                },
+
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                label = {
+                    Text(
+                        text =
+                            "Initial balance"
+                    )
+                },
+
+                singleLine =
+                    true
+            )
+
+
+            Spacer(
+                modifier =
+                    Modifier.height(8.dp)
+            )
+
+
+            Button(
+                onClick = {
+
+                    val balance =
+                        initialBalanceText
+                            .replace(
+                                "£",
+                                ""
+                            )
+                            .replace(
+                                ",",
+                                ""
+                            )
+                            .trim()
+                            .toDoubleOrNull()
+
+
+                    if (
+                        balance != null
+                    ) {
+
+                        preferences
+                            .edit()
+                            .putFloat(
+                                INITIAL_BALANCE_KEY,
+                                balance.toFloat()
+                            )
+                            .apply()
+
+
+                        initialBalanceText =
+                            formatMoney(
+                                balance
+                            )
+                    }
+                },
+
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(55.dp)
+            ) {
+
+                Text(
+                    text =
+                        "SET INITIAL BALANCE"
+                )
+            }
+
+
+            Spacer(
+                modifier =
+                    Modifier.height(15.dp)
+            )
+        }
+
+
+        OutlinedTextField(
+            value =
+                descriptionText,
+
+            onValueChange = {
+                descriptionText = it
+            },
+
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            label = {
+                Text(
+                    text =
+                        "Description"
+                )
+            },
+
+            singleLine =
+                true
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
+        OutlinedTextField(
+            value =
+                amountText,
+
+            onValueChange = {
+                amountText = it
+                    .replace(
+                        "£",
+                        ""
+                    )
+                    .replace(
+                        "+",
+                        ""
+                    )
+                    .replace(
+                        "-",
+                        ""
+                    )
+            },
+
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            label = {
+                Text(
+                    text =
+                        "Amount"
+                )
+            },
+
+            singleLine =
+                true
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            horizontalArrangement =
+                Arrangement.spacedBy(8.dp)
+        ) {
+
+            Button(
+                onClick = {
+                    moneyOutSelected = true
+                },
+
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(55.dp)
+            ) {
+
+                Text(
+                    text =
+                        if (
+                            moneyOutSelected
+                        ) {
+
+                            "✓ MONEY OUT"
+
+                        } else {
+
+                            "MONEY OUT"
+                        }
+                )
+            }
+
+
+            Button(
+                onClick = {
+                    moneyOutSelected = false
+                },
+
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(55.dp)
+            ) {
+
+                Text(
+                    text =
+                        if (
+                            !moneyOutSelected
+                        ) {
+
+                            "✓ MONEY IN"
+
+                        } else {
+
+                            "MONEY IN"
+                        }
+                )
+            }
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
+        Button(
+            onClick = {
+
+                val enteredAmount =
+                    amountText
+                        .replace(
+                            "£",
+                            ""
+                        )
+                        .replace(
+                            ",",
+                            ""
+                        )
+                        .trim()
+                        .toDoubleOrNull()
+
+
+                if (
+                    descriptionText.isNotBlank() &&
+                    enteredAmount != null &&
+                    enteredAmount > 0
+                ) {
+
+                    val signedAmount =
+                        if (
+                            moneyOutSelected
+                        ) {
+
+                            -enteredAmount
+
+                        } else {
+
+                            enteredAmount
+                        }
+
+
+                    val updatedTransactions =
+                        transactions
+                            .toMutableList()
+
+
+                    updatedTransactions.add(
+                        AccountTransaction(
+                            description =
+                                descriptionText
+                                    .trim(),
+
+                            amount =
+                                signedAmount
+                        )
+                    )
+
+
+                    saveTransactions(
+                        context,
+                        updatedTransactions
+                    )
+
+
+                    transactions =
+                        updatedTransactions
+
+
+                    descriptionText =
+                        ""
+
+                    amountText =
+                        ""
+                }
+            },
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(55.dp),
+
+            enabled =
+                preferences.contains(
+                    INITIAL_BALANCE_KEY
+                )
+        ) {
+
+            Text(
+                text =
+                    "SUBMIT"
+            )
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(15.dp)
+        )
+
+
+        Text(
+            text =
+                "Last 30 Entries",
+
+            style =
+                MaterialTheme
+                    .typography
+                    .headlineSmall
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
+        if (
+            recentTransactionIndices.isEmpty()
+        ) {
+
+            Text(
+                text =
+                    "No transactions yet.",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .bodyLarge
+            )
+
+        } else {
+
+            LazyColumn(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+
+                verticalArrangement =
+                    Arrangement.spacedBy(8.dp)
+            ) {
+
+                items(
+                    recentTransactionIndices
+                ) { transactionIndex ->
+
+                    val transaction =
+                        transactions[
+                            transactionIndex
+                        ]
+
+
+                    val balanceAfter =
+                        initialBalance +
+                                transactions
+                                    .take(
+                                        transactionIndex + 1
+                                    )
+                                    .sumOf {
+                                        it.amount
+                                    }
+
+
+                    AccountTransactionRow(
+                        transaction =
+                            transaction,
+
+                        balanceAfter =
+                            balanceAfter,
+
+                        onDelete = {
+
+                            val updatedTransactions =
+                                transactions
+                                    .toMutableList()
+
+
+                            if (
+                                transactionIndex in
+                                updatedTransactions.indices
+                            ) {
+
+                                updatedTransactions.removeAt(
+                                    transactionIndex
+                                )
+
+
+                                saveTransactions(
+                                    context,
+                                    updatedTransactions
+                                )
+
+
+                                transactions =
+                                    updatedTransactions
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
+        Button(
+            onClick = {
+                showResetDialog = true
+            },
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(55.dp)
+        ) {
+
+            Text(
+                text =
+                    "RESET ACCOUNT"
+            )
+        }
+    }
+
+
+    if (
+        showResetDialog
+    ) {
+
+        AlertDialog(
+            onDismissRequest = {
+                showResetDialog = false
+            },
+
+            title = {
+
+                Text(
+                    text =
+                        "Reset account?"
+                )
+            },
+
+            text = {
+
+                Text(
+                    text =
+                        "This will delete the initial balance and all transactions."
+                )
+            },
+
+            confirmButton = {
+
+                TextButton(
+                    onClick = {
+
+                        preferences
+                            .edit()
+                            .clear()
+                            .apply()
+
+
+                        initialBalanceText =
+                            ""
+
+                        transactions =
+                            emptyList()
+
+                        descriptionText =
+                            ""
+
+                        amountText =
+                            ""
+
+                        showResetDialog =
+                            false
+                    }
+                ) {
+
+                    Text(
+                        text =
+                            "RESET"
+                    )
+                }
+            },
+
+            dismissButton = {
+
+                TextButton(
+                    onClick = {
+                        showResetDialog = false
+                    }
+                ) {
+
+                    Text(
+                        text =
+                            "CANCEL"
+                    )
+                }
+            }
+        )
+    }
+}
+
+
+/* -------------------------------------------------- */
+/* ACCOUNT TRANSACTION ROW                            */
+/* -------------------------------------------------- */
+
+@Composable
+fun AccountTransactionRow(
+    transaction: AccountTransaction,
+    balanceAfter: Double,
+    onDelete: () -> Unit
+) {
+
+    Card(
+        modifier =
+            Modifier.fillMaxWidth(),
+
+        shape =
+            RoundedCornerShape(14.dp),
+
+        elevation =
+            CardDefaults.cardElevation(
+                defaultElevation = 2.dp
+            )
+    ) {
+
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
+        ) {
+
+            Row(
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                verticalAlignment =
+                    Alignment.CenterVertically
+            ) {
+
+                Column(
+                    modifier =
+                        Modifier.weight(1f)
+                ) {
+
+                    Text(
+                        text =
+                            transaction.description,
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .titleMedium
+                    )
+
+
+                    Text(
+                        text =
+                            formatSignedMoney(
+                                transaction.amount
+                            ),
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .bodyLarge
+                    )
+                }
+
+
+                Column(
+                    horizontalAlignment =
+                        Alignment.End
+                ) {
+
+                    Text(
+                        text =
+                            "Balance",
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .bodySmall
+                    )
+
+
+                    Text(
+                        text =
+                            formatMoney(
+                                balanceAfter
+                            ),
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .titleMedium
+                    )
+                }
+            }
+
+
+            Spacer(
+                modifier =
+                    Modifier.height(6.dp)
+            )
+
+
+            TextButton(
+                onClick =
+                    onDelete,
+
+                modifier =
+                    Modifier.fillMaxWidth()
+            ) {
+
+                Text(
+                    text =
+                        "DELETE"
+                )
+            }
+        }
+    }
+}
+
+
+/* -------------------------------------------------- */
+/* SIGNED MONEY                                       */
+/* -------------------------------------------------- */
+
+fun formatSignedMoney(
+    amount: Double
+): String {
+
+    return if (
+        amount >= 0
+    ) {
+
+        "+" +
+                formatMoney(
+                    amount
+                )
+
+    } else {
+
+        "-" +
+                formatMoney(
+                    kotlin.math.abs(
+                        amount
+                    )
+                )
+    }
 }
 
 
