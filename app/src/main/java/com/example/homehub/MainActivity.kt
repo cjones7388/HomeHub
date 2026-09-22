@@ -20,17 +20,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -342,14 +346,6 @@ class MainActivity : ComponentActivity() {
                     }
 
 
-                    /*
-                     * A = Bill name
-                     * B = Direct Debit day
-                     * C = Rate
-                     * D = Unit - ignored
-                     * E = Cost - ignored
-                     */
-
                     val range =
                         "'$sheetTitle'!A:E"
 
@@ -435,15 +431,6 @@ class MainActivity : ComponentActivity() {
                                 continue
                             }
 
-
-                            /*
-                             * Column C = Rate.
-                             *
-                             * This is the amount HomeHub
-                             * reports.
-                             *
-                             * Unit and Cost are ignored.
-                             */
 
                             val amountText =
                                 row.optString(2)
@@ -719,14 +706,6 @@ fun HomeHubApp(
     }
 
 
-    /*
-     * Samsung/Android system Back button.
-     *
-     * If we're inside Bills or Notes, go back Home.
-     * If we're already Home, Android handles the normal
-     * back behaviour and closes the app.
-     */
-
     BackHandler(
         enabled =
             currentScreen != "home"
@@ -823,26 +802,24 @@ fun HomeScreen(
         )
 
 
-        Text(
-            text =
-                "HomeHub",
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
 
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineLarge
-        )
+            horizontalArrangement =
+                Arrangement.Center
+        ) {
 
+            Text(
+                text =
+                    "HomeHub",
 
-        Text(
-            text =
-                "Your household at a glance",
-
-            style =
-                MaterialTheme
-                    .typography
-                    .bodyLarge
-        )
+                style =
+                    MaterialTheme
+                        .typography
+                        .headlineLarge
+            )
+        }
 
 
         Spacer(
@@ -1019,7 +996,7 @@ fun ScreenBackButton(
     Box(
         modifier =
             Modifier
-                .size(56.dp)
+                .size(90.dp)
                 .clickable {
                     onBack()
                 },
@@ -1035,7 +1012,7 @@ fun ScreenBackButton(
             style =
                 MaterialTheme
                     .typography
-                    .headlineLarge
+                    .displayLarge
         )
     }
 }
@@ -1066,10 +1043,6 @@ fun BillsScreen(
                 .padding(20.dp)
     ) {
 
-        /*
-         * Large, easy-to-hit back button.
-         */
-
         ScreenBackButton(
             onBack =
                 onBack
@@ -1081,10 +1054,6 @@ fun BillsScreen(
                 Modifier.height(10.dp)
         )
 
-
-        /*
-         * Large centred money emoji.
-         */
 
         Row(
             modifier =
@@ -1108,34 +1077,34 @@ fun BillsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(12.dp)
+                Modifier.height(8.dp)
         )
 
 
-        /*
-         * Centred Household Bills heading.
-         */
-
-        Text(
-            text =
-                "Household Bills",
-
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineMedium,
-
+        Row(
             modifier =
                 Modifier.fillMaxWidth(),
 
-            textAlign =
-                androidx.compose.ui.text.style.TextAlign.Center
-        )
+            horizontalArrangement =
+                Arrangement.Center
+        ) {
+
+            Text(
+                text =
+                    "Household Bills",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .headlineMedium
+            )
+        }
 
 
         Spacer(
             modifier =
-                Modifier.height(25.dp)
+                Modifier
+                    .height(20.dp)
         )
 
 
@@ -1196,11 +1165,11 @@ fun BillsScreen(
                             googleConnected
                         ) {
 
-                            "REFRESH THIS WEEK'S BILLS"
+                            "REFRESH THIS WEEK's BILLS"
 
                         } else {
 
-                            "LOAD THIS WEEK'S BILLS"
+                            "SHOW THIS WEEK's BILLS"
                         }
                 )
             }
@@ -1247,6 +1216,7 @@ fun BillsScreen(
         }
     }
 }
+
 
 /* -------------------------------------------------- */
 /* THIS WEEK'S BILLS                                  */
@@ -1518,6 +1488,38 @@ fun formatMoney(
 
 
 /* -------------------------------------------------- */
+/* NOTES STORAGE                                      */
+/* -------------------------------------------------- */
+
+private const val NOTES_PREFS =
+    "homehub_notes"
+
+private const val NOTE_ADHOC =
+    "adhoc"
+
+private const val NOTE_MONDAY =
+    "monday"
+
+private const val NOTE_TUESDAY =
+    "tuesday"
+
+private const val NOTE_WEDNESDAY =
+    "wednesday"
+
+private const val NOTE_THURSDAY =
+    "thursday"
+
+private const val NOTE_FRIDAY =
+    "friday"
+
+private const val NOTE_SATURDAY =
+    "saturday"
+
+private const val NOTE_SUNDAY =
+    "sunday"
+
+
+/* -------------------------------------------------- */
 /* NOTES SCREEN                                       */
 /* -------------------------------------------------- */
 
@@ -1526,17 +1528,116 @@ fun NotesScreen(
     onBack: () -> Unit
 ) {
 
+    val context =
+        LocalContext.current
+
+
+    val preferences =
+        remember {
+            context.getSharedPreferences(
+                NOTES_PREFS,
+                Context.MODE_PRIVATE
+            )
+        }
+
+
+    var adhocText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_ADHOC,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var mondayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_MONDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var tuesdayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_TUESDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var wednesdayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_WEDNESDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var thursdayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_THURSDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var fridayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_FRIDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var saturdayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_SATURDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var sundayText by remember {
+        mutableStateOf(
+            preferences.getString(
+                NOTE_SUNDAY,
+                ""
+            ) ?: ""
+        )
+    }
+
+
+    var showResetDialog by remember {
+        mutableStateOf(false)
+    }
+
+
     Column(
         modifier =
             Modifier
                 .fillMaxSize()
-                .padding(20.dp)
+                .navigationBarsPadding()
+                .padding(
+                    start = 20.dp,
+                    top = 10.dp,
+                    end = 20.dp,
+                    bottom = 10.dp
+                )
     ) {
-
-        /*
-         * Large, easy-to-hit back button.
-         * No "Notes" text beside it.
-         */
 
         ScreenBackButton(
             onBack =
@@ -1546,69 +1647,408 @@ fun NotesScreen(
 
         Spacer(
             modifier =
-                Modifier.height(20.dp)
+                Modifier.height(2.dp)
         )
 
 
+        LazyColumn(
+            verticalArrangement =
+                Arrangement.spacedBy(6.dp),
+
+            modifier =
+                Modifier.weight(1f)
+        ) {
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "AdHoc",
+
+                    text =
+                        adhocText,
+
+                    onTextChange = {
+                        adhocText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_ADHOC,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Mon",
+
+                    text =
+                        mondayText,
+
+                    onTextChange = {
+                        mondayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_MONDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Tue",
+
+                    text =
+                        tuesdayText,
+
+                    onTextChange = {
+                        tuesdayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_TUESDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Wed",
+
+                    text =
+                        wednesdayText,
+
+                    onTextChange = {
+                        wednesdayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_WEDNESDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Thu",
+
+                    text =
+                        thursdayText,
+
+                    onTextChange = {
+                        thursdayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_THURSDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Fri",
+
+                    text =
+                        fridayText,
+
+                    onTextChange = {
+                        fridayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_FRIDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Sat",
+
+                    text =
+                        saturdayText,
+
+                    onTextChange = {
+                        saturdayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_SATURDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+
+
+            item {
+
+                NoteEntry(
+                    label =
+                        "Sun",
+
+                    text =
+                        sundayText,
+
+                    onTextChange = {
+                        sundayText = it
+
+                        preferences
+                            .edit()
+                            .putString(
+                                NOTE_SUNDAY,
+                                it
+                            )
+                            .apply()
+                    }
+                )
+            }
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(6.dp)
+        )
+
+
+        Button(
+            onClick = {
+                showResetDialog = true
+            },
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(70.dp)
+        ) {
+
+            Text(
+                text =
+                    "RESET NOTES"
+            )
+        }
+    }
+
+
+    if (
+        showResetDialog
+    ) {
+
+        AlertDialog(
+            onDismissRequest = {
+                showResetDialog = false
+            },
+
+            title = {
+
+                Text(
+                    text =
+                        "Are you sure?"
+                )
+            },
+
+            text = {
+
+                Text(
+                    text =
+                        "This will delete all of your notes. This cannot be undone."
+                )
+            },
+
+            confirmButton = {
+
+                TextButton(
+                    onClick = {
+
+                        adhocText = ""
+
+                        mondayText = ""
+
+                        tuesdayText = ""
+
+                        wednesdayText = ""
+
+                        thursdayText = ""
+
+                        fridayText = ""
+
+                        saturdayText = ""
+
+                        sundayText = ""
+
+
+                        preferences
+                            .edit()
+                            .clear()
+                            .apply()
+
+
+                        showResetDialog = false
+                    }
+                ) {
+
+                    Text(
+                        text =
+                            "RESET"
+                    )
+                }
+            },
+
+            dismissButton = {
+
+                TextButton(
+                    onClick = {
+                        showResetDialog = false
+                    }
+                ) {
+
+                    Text(
+                        text =
+                            "CANCEL"
+                    )
+                }
+            }
+        )
+    }
+}
+
+
+/* -------------------------------------------------- */
+/* NOTE ENTRY                                         */
+/* -------------------------------------------------- */
+
+@Composable
+fun NoteEntry(
+    label: String,
+    text: String,
+    onTextChange: (String) -> Unit
+) {
+
+    Row(
+        modifier =
+            Modifier.fillMaxWidth(),
+
+        verticalAlignment =
+            Alignment.Top
+    ) {
+
         Text(
             text =
-                "📝",
+                label,
 
             style =
                 MaterialTheme
                     .typography
-                    .displaySmall
+                    .titleMedium,
+
+            modifier =
+                Modifier
+                    .size(
+                        width = 50.dp,
+                        height = 70.dp
+                    )
+                    .padding(
+                        top = 22.dp
+                    )
         )
 
 
         Spacer(
             modifier =
-                Modifier.height(10.dp)
+                Modifier.size(8.dp)
         )
 
 
-        Text(
-            text =
-                "Notes",
+        OutlinedTextField(
+            value =
+                text,
 
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineMedium
-        )
+            onValueChange = { newText ->
+
+                val capitalisedText =
+                    if (
+                        newText.isNotEmpty()
+                    ) {
+
+                        newText
+                            .replaceFirstChar {
+                                if (
+                                    it.isLowerCase()
+                                ) {
+                                    it.titlecase()
+                                } else {
+                                    it.toString()
+                                }
+                            }
+
+                    } else {
+
+                        newText
+                    }
 
 
-        Spacer(
+                onTextChange(
+                    capitalisedText
+                )
+            },
+
             modifier =
-                Modifier.height(8.dp)
-        )
+                Modifier
+                    .weight(1f)
+                    .height(70.dp),
 
+            singleLine =
+                false,
 
-        Text(
-            text =
-                "Your Samsung Notes integration will be added here.",
-
-            style =
-                MaterialTheme
-                    .typography
-                    .bodyLarge
-        )
-
-
-        Spacer(
-            modifier =
-                Modifier.height(30.dp)
-        )
-
-
-        Text(
-            text =
-                "Coming next.",
-
-            style =
-                MaterialTheme
-                    .typography
-                    .bodyMedium
+            maxLines =
+                3
         )
     }
 }
