@@ -1,5 +1,5 @@
-
 package com.example.homehub
+
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.text.input.KeyboardType
@@ -84,7 +84,7 @@ private const val SHEETS_SCOPE =
 
 
 /* -------------------------------------------------- */
-/* HOMEHUB COLOURS                                   */
+/* HOMEHUB COLOURS                                    */
 /* -------------------------------------------------- */
 
 private val HOMEHUB_BACKGROUND =
@@ -937,10 +937,19 @@ fun HomeScreen(
         ) {
 
             Image(
-                painter = painterResource(id = R.drawable.carlhomehub),
-                contentDescription = "HomeHub",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                painter =
+                    painterResource(
+                        id = R.drawable.carlhomehub
+                    ),
+
+                contentDescription =
+                    "HomeHub",
+
+                modifier =
+                    Modifier.fillMaxSize(),
+
+                contentScale =
+                    ContentScale.Crop
             )
         }
 
@@ -1262,8 +1271,7 @@ fun BillsScreen(
 
         Spacer(
             modifier =
-                Modifier
-                    .height(20.dp)
+                Modifier.height(20.dp)
         )
 
 
@@ -1815,8 +1823,18 @@ fun ReceiptsScreen(
     }
 
 
+    var editingTransactionIndex by remember {
+        mutableStateOf<Int?>(null)
+    }
+
+
     var showResetDialog by remember {
         mutableStateOf(false)
+    }
+
+
+    var checkResult by remember {
+        mutableStateOf<String?>(null)
     }
 
 
@@ -1832,15 +1850,23 @@ fun ReceiptsScreen(
             .toList()
             .takeLast(30)
 
-    val historyListState = rememberLazyListState()
+
+    val historyListState =
+        rememberLazyListState()
+
 
     LaunchedEffect(transactions.size) {
-        if (recentTransactionIndices.isNotEmpty()) {
+
+        if (
+            recentTransactionIndices.isNotEmpty()
+        ) {
+
             historyListState.animateScrollToItem(
                 recentTransactionIndices.lastIndex
             )
         }
     }
+
 
     val textFieldColors =
         OutlinedTextFieldDefaults.colors(
@@ -1875,6 +1901,92 @@ fun ReceiptsScreen(
             cursorColor =
                 HOMEHUB_PRIMARY
         )
+
+
+    fun checkLast30Amount() {
+
+        val enteredAmount =
+            amountText
+                .replace("£", "")
+                .replace(",", "")
+                .trim()
+                .toDoubleOrNull()
+
+
+        if (
+            enteredAmount == null ||
+            enteredAmount <= 0
+        ) {
+
+            checkResult =
+                "Enter an amount to check."
+
+            return
+        }
+
+
+        val targetAmount =
+            kotlin.math.abs(
+                enteredAmount
+            )
+
+
+        val recentTransactions =
+            transactions
+                .takeLast(30)
+                .asReversed()
+
+
+        val matches =
+            recentTransactions.filter {
+
+                kotlin.math.abs(
+                    kotlin.math.abs(it.amount) -
+                            targetAmount
+                ) < 0.005
+            }
+
+
+        checkResult =
+            if (
+                matches.isEmpty()
+            ) {
+
+                "£%.2f has NOT been entered in the last 30 records."
+                    .format(
+                        targetAmount
+                    )
+
+            } else {
+
+                val matchText =
+                    matches.joinToString(
+                        "\n"
+                    ) { transaction ->
+
+                        "${transaction.description} — " +
+                                "${formatSignedMoney(transaction.amount)}"
+                    }
+
+
+                "£%.2f has already been entered %d time%s in the last 30 records:\n\n%s"
+                    .format(
+                        targetAmount,
+
+                        matches.size,
+
+                        if (
+                            matches.size == 1
+                        ) {
+                            ""
+                        } else {
+                            "s"
+                        },
+
+                        matchText
+                    )
+            }
+    }
 
 
     Column(
@@ -1922,6 +2034,8 @@ fun ReceiptsScreen(
                 Modifier.height(8.dp)
         )
 
+
+        /* ---------------- BALANCE ---------------- */
 
         Card(
             modifier =
@@ -1993,20 +2107,34 @@ fun ReceiptsScreen(
         )
 
 
+        /* ---------------- DESCRIPTION ---------------- */
+
         OutlinedTextField(
-            value = descriptionText,
-            onValueChange = { newText ->
-                descriptionText = newText
+            value =
+                descriptionText,
+
+            onValueChange = {
+                descriptionText = it
             },
-            modifier = Modifier.fillMaxWidth(),
+
+            modifier =
+                Modifier.fillMaxWidth(),
+
             placeholder = {
                 Text("Description")
             },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.Sentences
-            ),
-            colors = textFieldColors
+
+            singleLine =
+                true,
+
+            keyboardOptions =
+                KeyboardOptions(
+                    capitalization =
+                        KeyboardCapitalization.Sentences
+                ),
+
+            colors =
+                textFieldColors
         )
 
 
@@ -2016,23 +2144,41 @@ fun ReceiptsScreen(
         )
 
 
+        /* ---------------- AMOUNT ---------------- */
+
         OutlinedTextField(
-            value = amountText,
+            value =
+                amountText,
+
             onValueChange = {
-                amountText = it
-                    .replace("£", "")
-                    .replace("+", "")
-                    .replace("-", "")
+
+                amountText =
+                    it
+                        .replace("£", "")
+                        .replace("+", "")
+                        .replace("-", "")
+
+                checkResult = null
             },
-            modifier = Modifier.fillMaxWidth(),
+
+            modifier =
+                Modifier.fillMaxWidth(),
+
             placeholder = {
                 Text("Amount")
             },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Number
-            ),
-            colors = textFieldColors
+
+            singleLine =
+                true,
+
+            keyboardOptions =
+                KeyboardOptions(
+                    keyboardType =
+                        KeyboardType.Number
+                ),
+
+            colors =
+                textFieldColors
         )
 
 
@@ -2041,6 +2187,91 @@ fun ReceiptsScreen(
                 Modifier.height(6.dp)
         )
 
+
+        /* ---------------- CHECK LAST 30 ---------------- */
+
+        Button(
+            onClick = {
+                checkLast30Amount()
+            },
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(45.dp),
+
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor =
+                        HOMEHUB_SECONDARY,
+
+                    contentColor =
+                        HOMEHUB_PRIMARY
+                )
+        ) {
+
+            Text(
+                text =
+                    "CHECK LAST 30"
+            )
+        }
+
+
+        if (
+            checkResult != null
+        ) {
+
+            Spacer(
+                modifier =
+                    Modifier.height(6.dp)
+            )
+
+
+            Card(
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                shape =
+                    RoundedCornerShape(12.dp),
+
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor =
+                            Color.White,
+
+                        contentColor =
+                            HOMEHUB_TEXT
+                    ),
+
+                elevation =
+                    CardDefaults.cardElevation(
+                        defaultElevation = 2.dp
+                    )
+            ) {
+
+                Text(
+                    text =
+                        checkResult!!,
+
+                    modifier =
+                        Modifier.padding(12.dp),
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .bodyMedium
+                )
+            }
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(6.dp)
+        )
+
+
+        /* ---------------- MONEY IN / OUT ---------------- */
 
         Row(
             modifier =
@@ -2167,6 +2398,8 @@ fun ReceiptsScreen(
         )
 
 
+        /* ---------------- SUBMIT / UPDATE ---------------- */
+
         Button(
             onClick = {
 
@@ -2204,20 +2437,46 @@ fun ReceiptsScreen(
 
 
                     val updatedTransactions =
-                        transactions
-                            .toMutableList()
+                        transactions.toMutableList()
 
 
-                    updatedTransactions.add(
-                        AccountTransaction(
-                            description =
-                                descriptionText
-                                    .trim(),
+                    val editingIndex =
+                        editingTransactionIndex
 
-                            amount =
-                                signedAmount
+
+                    if (
+                        editingIndex != null &&
+                        editingIndex in
+                        updatedTransactions.indices
+                    ) {
+
+                        /* UPDATE EXISTING */
+
+                        updatedTransactions[
+                            editingIndex
+                        ] =
+                            AccountTransaction(
+                                description =
+                                    descriptionText.trim(),
+
+                                amount =
+                                    signedAmount
+                            )
+
+                    } else {
+
+                        /* ADD NEW */
+
+                        updatedTransactions.add(
+                            AccountTransaction(
+                                description =
+                                    descriptionText.trim(),
+
+                                amount =
+                                    signedAmount
+                            )
                         )
-                    )
+                    }
 
 
                     saveTransactions(
@@ -2236,6 +2495,12 @@ fun ReceiptsScreen(
                     amountText =
                         ""
 
+                    editingTransactionIndex =
+                        null
+
+                    checkResult =
+                        null
+
 
                     keyboardController?.hide()
                 }
@@ -2249,16 +2514,80 @@ fun ReceiptsScreen(
 
             Text(
                 text =
-                    "SUBMIT"
+                    if (
+                        editingTransactionIndex != null
+                    ) {
+
+                        "UPDATE"
+
+                    } else {
+
+                        "SUBMIT"
+                    }
             )
+        }
+
+
+        /* ---------------- CANCEL EDIT ---------------- */
+
+        if (
+            editingTransactionIndex != null
+        ) {
+
+            Spacer(
+                modifier =
+                    Modifier.height(4.dp)
+            )
+
+
+            TextButton(
+                onClick = {
+
+                    descriptionText =
+                        ""
+
+                    amountText =
+                        ""
+
+                    editingTransactionIndex =
+                        null
+
+                    checkResult =
+                        null
+
+                    keyboardController?.hide()
+                },
+
+                modifier =
+                    Modifier.fillMaxWidth()
+            ) {
+
+                Text(
+                    text =
+                        "CANCEL EDIT"
+                )
+            }
         }
 
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(
+                    if (
+                        editingTransactionIndex != null
+                    ) {
+
+                        2.dp
+
+                    } else {
+
+                        8.dp
+                    }
+                )
         )
 
+
+        /* ---------------- HISTORY TITLE ---------------- */
 
         Row(
             modifier =
@@ -2285,6 +2614,8 @@ fun ReceiptsScreen(
                 Modifier.height(6.dp)
         )
 
+
+        /* ---------------- HISTORY ---------------- */
 
         if (
             recentTransactionIndices.isEmpty()
@@ -2317,11 +2648,16 @@ fun ReceiptsScreen(
         } else {
 
             LazyColumn(
-                state = historyListState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(2f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                state =
+                    historyListState,
+
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(2f),
+
+                verticalArrangement =
+                    Arrangement.spacedBy(8.dp)
             ) {
 
                 items(
@@ -2351,11 +2687,33 @@ fun ReceiptsScreen(
                         balanceAfter =
                             balanceAfter,
 
+                        onEdit = {
+
+                            descriptionText =
+                                transaction.description
+
+
+                            amountText =
+                                kotlin.math.abs(
+                                    transaction.amount
+                                ).toString()
+
+
+                            moneyOutSelected =
+                                transaction.amount < 0
+
+
+                            editingTransactionIndex =
+                                transactionIndex
+
+                            checkResult =
+                                null
+                        },
+
                         onDelete = {
 
                             val updatedTransactions =
-                                transactions
-                                    .toMutableList()
+                                transactions.toMutableList()
 
 
                             if (
@@ -2376,6 +2734,25 @@ fun ReceiptsScreen(
 
                                 transactions =
                                     updatedTransactions
+
+
+                                if (
+                                    editingTransactionIndex ==
+                                    transactionIndex
+                                ) {
+
+                                    descriptionText =
+                                        ""
+
+                                    amountText =
+                                        ""
+
+                                    editingTransactionIndex =
+                                        null
+
+                                    checkResult =
+                                        null
+                                }
                             }
                         }
                     )
@@ -2389,6 +2766,8 @@ fun ReceiptsScreen(
                 Modifier.height(6.dp)
         )
 
+
+        /* ---------------- RESET ---------------- */
 
         Button(
             onClick = {
@@ -2408,6 +2787,8 @@ fun ReceiptsScreen(
         }
     }
 
+
+    /* ---------------- RESET DIALOG ---------------- */
 
     if (
         showResetDialog
@@ -2458,6 +2839,12 @@ fun ReceiptsScreen(
                         amountText =
                             ""
 
+                        editingTransactionIndex =
+                            null
+
+                        checkResult =
+                            null
+
                         showResetDialog =
                             false
                     }
@@ -2497,8 +2884,14 @@ fun ReceiptsScreen(
 fun AccountTransactionRow(
     transaction: AccountTransaction,
     balanceAfter: Double,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+
+    var showDeleteConfirmation by remember {
+        mutableStateOf(false)
+    }
+
 
     Card(
         modifier =
@@ -2616,26 +3009,121 @@ fun AccountTransactionRow(
             )
 
 
-            TextButton(
-                onClick =
-                    onDelete,
-
+            Row(
                 modifier =
                     Modifier.fillMaxWidth(),
 
-                colors =
-                    ButtonDefaults.textButtonColors(
-                        contentColor =
-                            HOMEHUB_OUTGOING
-                    )
+                horizontalArrangement =
+                    Arrangement.End
             ) {
+
+                TextButton(
+                    onClick =
+                        onEdit,
+
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            contentColor =
+                                HOMEHUB_PRIMARY
+                        )
+                ) {
+
+                    Text(
+                        text =
+                            "EDIT"
+                    )
+                }
+
+
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = true
+                    },
+
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            contentColor =
+                                HOMEHUB_OUTGOING
+                        )
+                ) {
+
+                    Text(
+                        text =
+                            "DELETE"
+                    )
+                }
+            }
+        }
+    }
+
+
+    /* ---------------- DELETE CONFIRMATION ---------------- */
+
+    if (
+        showDeleteConfirmation
+    ) {
+
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteConfirmation = false
+            },
+
+            title = {
 
                 Text(
                     text =
-                        "DELETE"
+                        "Delete this record?"
                 )
+            },
+
+            text = {
+
+                Text(
+                    text =
+                        "Are you sure you want to delete \"${transaction.description}\"? This can't be undone."
+                )
+            },
+
+            confirmButton = {
+
+                TextButton(
+                    onClick = {
+
+                        showDeleteConfirmation =
+                            false
+
+                        onDelete()
+                    },
+
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            contentColor =
+                                HOMEHUB_OUTGOING
+                        )
+                ) {
+
+                    Text(
+                        text =
+                            "DELETE"
+                    )
+                }
+            },
+
+            dismissButton = {
+
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                    }
+                ) {
+
+                    Text(
+                        text =
+                            "CANCEL"
+                    )
+                }
             }
-        }
+        )
     }
 }
 
@@ -2716,6 +3204,7 @@ fun NotesScreen(
 
     val preferences =
         remember {
+
             context.getSharedPreferences(
                 NOTES_PREFS,
                 Context.MODE_PRIVATE
@@ -2724,6 +3213,7 @@ fun NotesScreen(
 
 
     var adhocText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_ADHOC,
@@ -2734,6 +3224,7 @@ fun NotesScreen(
 
 
     var mondayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_MONDAY,
@@ -2744,6 +3235,7 @@ fun NotesScreen(
 
 
     var tuesdayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_TUESDAY,
@@ -2754,6 +3246,7 @@ fun NotesScreen(
 
 
     var wednesdayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_WEDNESDAY,
@@ -2764,6 +3257,7 @@ fun NotesScreen(
 
 
     var thursdayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_THURSDAY,
@@ -2774,6 +3268,7 @@ fun NotesScreen(
 
 
     var fridayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_FRIDAY,
@@ -2784,6 +3279,7 @@ fun NotesScreen(
 
 
     var saturdayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_SATURDAY,
@@ -2794,6 +3290,7 @@ fun NotesScreen(
 
 
     var sundayText by remember {
+
         mutableStateOf(
             preferences.getString(
                 NOTE_SUNDAY,
@@ -3265,11 +3762,15 @@ fun NoteEntry(
 
                         newText
                             .replaceFirstChar {
+
                                 if (
                                     it.isLowerCase()
                                 ) {
+
                                     it.titlecase()
+
                                 } else {
+
                                     it.toString()
                                 }
                             }
