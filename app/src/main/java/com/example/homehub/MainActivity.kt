@@ -1,5 +1,5 @@
 package com.example.homehub
-
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.text.input.KeyboardType
@@ -3345,6 +3345,7 @@ fun NotesScreen(
             Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
+                .imePadding()
                 .padding(
                     start = 20.dp,
                     top = 10.dp,
@@ -3366,11 +3367,18 @@ fun NotesScreen(
 
 
         LazyColumn(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+
             verticalArrangement =
                 Arrangement.spacedBy(6.dp),
 
-            modifier =
-                Modifier.weight(1f)
+            contentPadding =
+                androidx.compose.foundation.layout.PaddingValues(
+                    bottom = 30.dp
+                )
         ) {
 
             item {
@@ -3696,7 +3704,6 @@ fun NotesScreen(
         )
     }
 }
-
 
 /* -------------------------------------------------- */
 /* NOTE ENTRY                                         */
