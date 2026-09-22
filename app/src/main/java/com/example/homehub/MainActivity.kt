@@ -12,6 +12,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,8 +50,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -919,99 +922,98 @@ fun HomeScreen(
             Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
-                .padding(20.dp),
-
-        verticalArrangement =
-            Arrangement.Center
     ) {
 
-        Text(
-            text =
-                "HomeHub",
-
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineLarge,
-
+        Box(
             modifier =
-                Modifier.fillMaxWidth(),
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
 
-            textAlign =
-                TextAlign.Center
-        )
+            contentAlignment =
+                Alignment.Center
+        ) {
+
+            Image(
+                painter = painterResource(id = R.drawable.carlhomehub),
+                contentDescription = "HomeHub",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        }
 
 
-        Spacer(
+        Column(
             modifier =
-                Modifier.height(24.dp)
-        )
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(
+                        start = 20.dp,
+                        end = 20.dp,
+                        bottom = 20.dp
+                    ),
+
+            verticalArrangement =
+                Arrangement.Center
+        ) {
+
+            HomeCard(
+                emoji =
+                    "💷",
+
+                title =
+                    "Bills",
+
+                description =
+                    "Your household bills from Google Sheets",
+
+                onClick =
+                    onBillsClick
+            )
 
 
-        HomeCard(
-            emoji =
-                "💷",
-
-            title =
-                "Bills",
-
-            description =
-                "Your household bills from Google Sheets",
-
-            onClick =
-                onBillsClick
-        )
+            Spacer(
+                modifier =
+                    Modifier.height(16.dp)
+            )
 
 
-        Spacer(
-            modifier =
-                Modifier.height(16.dp)
-        )
+            HomeCard(
+                emoji =
+                    "📝",
+
+                title =
+                    "Notes",
+
+                description =
+                    "Your notes and lists",
+
+                onClick =
+                    onNotesClick
+            )
 
 
-        HomeCard(
-            emoji =
-                "📝",
-
-            title =
-                "Notes",
-
-            description =
-                "Your notes and lists",
-
-            onClick =
-                onNotesClick
-        )
+            Spacer(
+                modifier =
+                    Modifier.height(16.dp)
+            )
 
 
-        Spacer(
-            modifier =
-                Modifier.height(16.dp)
-        )
+            HomeCard(
+                emoji =
+                    "🧾",
 
+                title =
+                    "Receipts",
 
-        HomeCard(
-            emoji =
-                "🧾",
+                description =
+                    "Track your current account balance",
 
-            title =
-                "Receipts",
-
-            description =
-                "Track your current account balance",
-
-            onClick =
-                onReceiptsClick
-        )
-
-
-        Spacer(
-            modifier =
-                Modifier.height(24.dp)
-        )
-
-
-
+                onClick =
+                    onReceiptsClick
+            )
+        }
     }
 }
 
@@ -1119,7 +1121,8 @@ fun HomeCard(
 
 
             Text(
-                text = "→",
+                text =
+                    "→",
 
                 style =
                     MaterialTheme
@@ -1323,7 +1326,7 @@ fun BillsScreen(
 
                         } else {
 
-                            "SHOW THIS WEEK's BILLS"
+                            "SHOW THIS WEEK'S BILLS"
                         }
                 )
             }
@@ -1856,7 +1859,7 @@ fun ReceiptsScreen(
                 HOMEHUB_PRIMARY,
 
             unfocusedLabelColor =
-                HOMEHUB_TEXT,
+                HOMEHUB_PRIMARY,
 
             cursorColor =
                 HOMEHUB_PRIMARY
@@ -1992,13 +1995,6 @@ fun ReceiptsScreen(
             modifier =
                 Modifier.fillMaxWidth(),
 
-            label = {
-                Text(
-                    text =
-                        "Description"
-                )
-            },
-
             singleLine =
                 true,
 
@@ -2042,12 +2038,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier.fillMaxWidth(),
 
-            label = {
-                Text(
-                    text =
-                        "Amount"
-                )
-            },
+
 
             singleLine =
                 true,
@@ -2859,7 +2850,7 @@ fun NotesScreen(
                 HOMEHUB_PRIMARY,
 
             unfocusedLabelColor =
-                HOMEHUB_TEXT,
+                HOMEHUB_PRIMARY,
 
             cursorColor =
                 HOMEHUB_PRIMARY
