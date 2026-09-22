@@ -1,4 +1,3 @@
-
 package com.example.homehub
 
 import android.content.ActivityNotFoundException
@@ -21,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -45,15 +46,27 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
 
 private const val SPREADSHEET_ID =
     "1C-vyDVpJHEuQlkSGV3G2Pd_5LqyUKhns-fxHe_F-PeQ"
 
-private const val TARGET_SHEET_ID = 1903279729
+private const val TARGET_SHEET_ID =
+    1903279729
 
 private const val SHEETS_SCOPE =
     "https://www.googleapis.com/auth/spreadsheets.readonly"
+
+
+data class Bill(
+    val name: String,
+    val dueDay: Int,
+    val amount: Double,
+    val dueDate: LocalDate
+)
 
 
 class MainActivity : ComponentActivity() {
@@ -63,6 +76,8 @@ class MainActivity : ComponentActivity() {
     private var loading by mutableStateOf(false)
 
     private var sheetStatus by mutableStateOf<String?>(null)
+
+    private var thisWeeksBills by mutableStateOf<List<Bill>>(emptyList())
 
 
     private val authorizationLauncher =
@@ -83,6 +98,7 @@ class MainActivity : ComponentActivity() {
                 return@registerForActivityResult
             }
 
+
             try {
 
                 val authorizationResult =
@@ -91,6 +107,7 @@ class MainActivity : ComponentActivity() {
                         .getAuthorizationResultFromIntent(
                             result.data
                         )
+
 
                 handleAuthorizationResult(
                     authorizationResult
@@ -112,14 +129,26 @@ class MainActivity : ComponentActivity() {
         savedInstanceState: Bundle?
     ) {
 
-        super.onCreate(savedInstanceState)
+        super.onCreate(
+            savedInstanceState
+        )
+
 
         setContent {
 
             HomeHubApp(
-                googleConnected = googleConnected,
-                loading = loading,
-                sheetStatus = sheetStatus,
+                googleConnected =
+                    googleConnected,
+
+                loading =
+                    loading,
+
+                sheetStatus =
+                    sheetStatus,
+
+                thisWeeksBills =
+                    thisWeeksBills,
+
                 onConnectGoogle = {
                     connectGoogleSheets()
                 }
@@ -140,7 +169,9 @@ class MainActivity : ComponentActivity() {
                 .builder()
                 .setRequestedScopes(
                     listOf(
-                        Scope(SHEETS_SCOPE)
+                        Scope(
+                            SHEETS_SCOPE
+                        )
                     )
                 )
                 .build()
@@ -151,12 +182,17 @@ class MainActivity : ComponentActivity() {
             .authorize(request)
             .addOnSuccessListener { result ->
 
-                if (result.hasResolution()) {
+                if (
+                    result.hasResolution()
+                ) {
 
                     val pendingIntent =
                         result.pendingIntent
 
-                    if (pendingIntent == null) {
+
+                    if (
+                        pendingIntent == null
+                    ) {
 
                         loading = false
 
@@ -205,7 +241,9 @@ class MainActivity : ComponentActivity() {
             result.accessToken
 
 
-        if (accessToken.isNullOrBlank()) {
+        if (
+            accessToken.isNullOrBlank()
+        ) {
 
             loading = false
 
@@ -233,8 +271,8 @@ class MainActivity : ComponentActivity() {
                 try {
 
                     /*
-                     * First find the sheet tab using
-                     * its numeric sheet ID.
+                     * Find the correct Google Sheets tab
+                     * using its numeric sheet ID.
                      */
 
                     val spreadsheetUrl =
@@ -252,10 +290,13 @@ class MainActivity : ComponentActivity() {
 
                     val sheetsArray =
                         spreadsheetJson
-                            .getJSONArray("sheets")
+                            .getJSONArray(
+                                "sheets"
+                            )
 
 
-                    var sheetTitle: String? = null
+                    var sheetTitle: String? =
+                        null
 
 
                     for (
@@ -294,7 +335,9 @@ class MainActivity : ComponentActivity() {
                     }
 
 
-                    if (sheetTitle == null) {
+                    if (
+                        sheetTitle == null
+                    ) {
 
                         throw Exception(
                             "Couldn't find the Bills sheet tab."
@@ -303,8 +346,13 @@ class MainActivity : ComponentActivity() {
 
 
                     /*
-                     * Read columns A:E from the
-                     * native Google Sheet.
+                     * Read columns A:E.
+                     *
+                     * A = Bill name
+                     * B = Direct Debit day
+                     * C = Rate
+                     * D = Unit
+                     * E = Cost
                      */
 
                     val range =
@@ -312,10 +360,15 @@ class MainActivity : ComponentActivity() {
 
 
                     val encodedRange =
-                        URLEncoder.encode(
-                            range,
-                            "UTF-8"
-                        )
+                        URLEncoder
+                            .encode(
+                                range,
+                                "UTF-8"
+                            )
+                            .replace(
+                                "+",
+                                "%20"
+                            )
 
 
                     val valuesUrl =
@@ -337,18 +390,253 @@ class MainActivity : ComponentActivity() {
                         )
 
 
-                    val rowCount =
-                        rows?.length() ?: 0
+                    val bills =
+                        mutableListOf<Bill>()
 
 
-                    val dataRows =
-                        if (rowCount > 0) {
+                    /*
+                     * These categories are not household
+                     * bills and are deliberately excluded.
+                     *
+                     * Matching is case-insensitive.
+                     */
 
-                            rowCount - 1
+                    val excludedCategories =
+                        setOf(
+                            "food",
+                            "going out",
+                            "travelling"
+                        )
 
-                        } else {
 
-                            0
+                    if (
+                        rows != null
+                    ) {
+
+                        for (
+                        i in 1 until rows.length()
+                        ) {
+
+                            val row =
+                                rows.getJSONArray(i)
+
+
+                            /*
+                             * We need:
+                             *
+                             * A = Bill name
+                             * B = Direct Debit day
+                             *
+                             * Column D (Unit) is completely
+                             * ignored.
+                             */
+
+                            if (
+                                row.length() < 2
+                            ) {
+                                continue
+                            }
+
+
+                            val name =
+                                row.optString(0)
+                                    .trim()
+
+
+                            val dueDayText =
+                                row.optString(1)
+                                    .trim()
+
+
+                            /*
+                             * Ignore Food, Going out
+                             * and Travelling.
+                             */
+
+                            if (
+                                excludedCategories.contains(
+                                    name.lowercase()
+                                )
+                            ) {
+
+                                continue
+                            }
+
+
+                            /*
+                             * Column E = Cost.
+                             *
+                             * This is ALWAYS the amount
+                             * reported by HomeHub.
+                             *
+                             * Unit does not matter.
+                             */
+
+                            val amountText =
+                                if (
+                                    row.length() > 2
+                                ) {
+
+                                    // Column C = Rate
+                                    // This is the amount HomeHub reports.
+                                    // Column D (Unit) and Column E (Cost) are ignored.
+
+                                    row.optString(2)
+                                        .trim()
+
+                                } else {
+
+                                    ""
+                                }
+
+                            /*
+                             * A missing Cost field is ignored.
+                             *
+                             * £0.00 IS VALID and is included.
+                             */
+
+                            if (
+                                name.isBlank() ||
+                                dueDayText.isBlank() ||
+                                amountText.isBlank()
+                            ) {
+
+                                continue
+                            }
+
+
+                            val dueDay =
+                                dueDayText
+                                    .toDoubleOrNull()
+                                    ?.toInt()
+
+
+                            val amount =
+                                amountText
+                                    .replace(
+                                        "£",
+                                        ""
+                                    )
+                                    .replace(
+                                        ",",
+                                        ""
+                                    )
+                                    .toDoubleOrNull()
+
+
+                            if (
+                                dueDay == null ||
+                                amount == null ||
+                                dueDay !in 1..31
+                            ) {
+
+                                continue
+                            }
+
+
+                            /*
+                             * Find this month's occurrence
+                             * of the bill.
+                             */
+
+                            val today =
+                                LocalDate.now()
+
+
+                            val lastDay =
+                                today
+                                    .withDayOfMonth(1)
+                                    .lengthOfMonth()
+
+
+                            /*
+                             * If the due day doesn't exist
+                             * in this month, ignore it.
+                             */
+
+                            if (
+                                dueDay > lastDay
+                            ) {
+
+                                continue
+                            }
+
+
+                            val dueDate =
+                                LocalDate.of(
+                                    today.year,
+                                    today.month,
+                                    dueDay
+                                )
+
+
+                            bills.add(
+                                Bill(
+                                    name =
+                                        name,
+
+                                    dueDay =
+                                        dueDay,
+
+                                    amount =
+                                        amount,
+
+                                    dueDate =
+                                        dueDate
+                                )
+                            )
+                        }
+                    }
+
+
+                    /*
+                     * Work out Monday -> Sunday
+                     * for the current week.
+                     */
+
+                    val today =
+                        LocalDate.now()
+
+
+                    val monday =
+                        today.with(
+                            DayOfWeek.MONDAY
+                        )
+
+
+                    val sunday =
+                        monday.plusDays(6)
+
+
+                    /*
+                     * Only bills whose due date falls
+                     * between Monday and Sunday are shown.
+                     */
+
+                    val weeklyBills =
+                        bills
+                            .filter {
+
+                                !it.dueDate.isBefore(
+                                    monday
+                                ) &&
+                                        !it.dueDate.isAfter(
+                                            sunday
+                                        )
+                            }
+                            .sortedBy {
+                                it.dueDate
+                            }
+
+
+                    /*
+                     * The total is calculated from
+                     * Column E (Cost).
+                     */
+
+                    val total =
+                        weeklyBills.sumOf {
+                            it.amount
                         }
 
 
@@ -358,9 +646,22 @@ class MainActivity : ComponentActivity() {
 
                         loading = false
 
+                        thisWeeksBills =
+                            weeklyBills
+
+
                         sheetStatus =
-                            "Connected successfully — " +
-                                    "$dataRows bill rows read."
+                            if (
+                                weeklyBills.isEmpty()
+                            ) {
+
+                                "Google Sheet connected — no bills due this week."
+
+                            } else {
+
+                                "${weeklyBills.size} bill(s) due this week — " +
+                                        formatMoney(total)
+                            }
                     }
 
                 } catch (e: Exception) {
@@ -392,7 +693,8 @@ class MainActivity : ComponentActivity() {
 
         try {
 
-            connection.requestMethod = "GET"
+            connection.requestMethod =
+                "GET"
 
 
             connection.setRequestProperty(
@@ -407,9 +709,12 @@ class MainActivity : ComponentActivity() {
             )
 
 
-            connection.connectTimeout = 15000
+            connection.connectTimeout =
+                15000
 
-            connection.readTimeout = 15000
+
+            connection.readTimeout =
+                15000
 
 
             val responseCode =
@@ -475,11 +780,11 @@ fun HomeHubApp(
     googleConnected: Boolean,
     loading: Boolean,
     sheetStatus: String?,
+    thisWeeksBills: List<Bill>,
     onConnectGoogle: () -> Unit
 ) {
 
     var currentScreen by remember {
-
         mutableStateOf("home")
     }
 
@@ -492,10 +797,13 @@ fun HomeHubApp(
 
                 HomeScreen(
                     onBillsClick = {
-                        currentScreen = "bills"
+                        currentScreen =
+                            "bills"
                     },
+
                     onNotesClick = {
-                        currentScreen = "notes"
+                        currentScreen =
+                            "notes"
                     }
                 )
             }
@@ -505,12 +813,22 @@ fun HomeHubApp(
 
                 BillsScreen(
                     onBack = {
-                        currentScreen = "home"
+                        currentScreen =
+                            "home"
                     },
+
                     googleConnected =
                         googleConnected,
-                    loading = loading,
-                    sheetStatus = sheetStatus,
+
+                    loading =
+                        loading,
+
+                    sheetStatus =
+                        sheetStatus,
+
+                    thisWeeksBills =
+                        thisWeeksBills,
+
                     onConnectGoogle =
                         onConnectGoogle
                 )
@@ -521,7 +839,8 @@ fun HomeHubApp(
 
                 NotesScreen(
                     onBack = {
-                        currentScreen = "home"
+                        currentScreen =
+                            "home"
                     }
                 )
             }
@@ -541,65 +860,93 @@ fun HomeScreen(
 ) {
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(20.dp),
 
         verticalArrangement =
             Arrangement.spacedBy(16.dp)
     ) {
 
         Spacer(
-            modifier = Modifier.height(20.dp)
+            modifier =
+                Modifier.height(20.dp)
         )
 
 
         Text(
-            text = "HomeHub",
+            text =
+                "HomeHub",
+
             style =
-                MaterialTheme.typography.headlineLarge
+                MaterialTheme
+                    .typography
+                    .headlineLarge
         )
 
 
         Text(
-            text = "Your household at a glance",
+            text =
+                "Your household at a glance",
+
             style =
-                MaterialTheme.typography.bodyLarge
+                MaterialTheme
+                    .typography
+                    .bodyLarge
         )
 
 
         Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(8.dp)
         )
 
 
         HomeCard(
-            emoji = "💷",
-            title = "Bills",
+            emoji =
+                "💷",
+
+            title =
+                "Bills",
+
             description =
                 "Your household bills from Google Sheets",
-            onClick = onBillsClick
+
+            onClick =
+                onBillsClick
         )
 
 
         HomeCard(
-            emoji = "📝",
-            title = "Notes",
+            emoji =
+                "📝",
+
+            title =
+                "Notes",
+
             description =
                 "Your notes and lists",
-            onClick = onNotesClick
+
+            onClick =
+                onNotesClick
         )
 
 
         Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(8.dp)
         )
 
 
         Text(
-            text = "More features coming soon",
+            text =
+                "More features coming soon",
+
             style =
-                MaterialTheme.typography.bodyMedium
+                MaterialTheme
+                    .typography
+                    .bodyMedium
         )
     }
 }
@@ -618,11 +965,12 @@ fun HomeCard(
 ) {
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                onClick()
-            },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable {
+                    onClick()
+                },
 
         shape =
             RoundedCornerShape(20.dp),
@@ -634,18 +982,23 @@ fun HomeCard(
     ) {
 
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
 
             verticalAlignment =
                 Alignment.CenterVertically
         ) {
 
             Text(
-                text = emoji,
+                text =
+                    emoji,
+
                 style =
-                    MaterialTheme.typography.headlineMedium,
+                    MaterialTheme
+                        .typography
+                        .headlineMedium,
 
                 modifier =
                     Modifier.size(50.dp)
@@ -653,38 +1006,53 @@ fun HomeCard(
 
 
             Spacer(
-                modifier = Modifier.size(16.dp)
+                modifier =
+                    Modifier.size(16.dp)
             )
 
 
             Column(
-                modifier = Modifier.weight(1f)
+                modifier =
+                    Modifier.weight(1f)
             ) {
 
                 Text(
-                    text = title,
+                    text =
+                        title,
+
                     style =
-                        MaterialTheme.typography.titleLarge
+                        MaterialTheme
+                            .typography
+                            .titleLarge
                 )
 
 
                 Spacer(
-                    modifier = Modifier.height(4.dp)
+                    modifier =
+                        Modifier.height(4.dp)
                 )
 
 
                 Text(
-                    text = description,
+                    text =
+                        description,
+
                     style =
-                        MaterialTheme.typography.bodyMedium
+                        MaterialTheme
+                            .typography
+                            .bodyMedium
                 )
             }
 
 
             Text(
-                text = "›",
+                text =
+                    "›",
+
                 style =
-                    MaterialTheme.typography.headlineMedium
+                    MaterialTheme
+                        .typography
+                        .headlineMedium
             )
         }
     }
@@ -701,6 +1069,7 @@ fun BillsScreen(
     googleConnected: Boolean,
     loading: Boolean,
     sheetStatus: String?,
+    thisWeeksBills: List<Bill>,
     onConnectGoogle: () -> Unit
 ) {
 
@@ -709,15 +1078,20 @@ fun BillsScreen(
 
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(20.dp)
     ) {
 
         Text(
-            text = "‹  Bills",
+            text =
+                "‹  Bills",
+
             style =
-                MaterialTheme.typography.headlineLarge,
+                MaterialTheme
+                    .typography
+                    .headlineLarge,
 
             modifier =
                 Modifier.clickable {
@@ -727,56 +1101,59 @@ fun BillsScreen(
 
 
         Spacer(
-            modifier = Modifier.height(35.dp)
-        )
-
-
-        Text(
-            text = "💷",
-            style =
-                MaterialTheme.typography.displaySmall
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(10.dp)
-        )
-
-
-        Text(
-            text = "Household Bills",
-            style =
-                MaterialTheme.typography.headlineMedium
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(8.dp)
-        )
-
-
-        Text(
-            text = "Bills - Google Sheets",
-            style =
-                MaterialTheme.typography.titleMedium
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(25.dp)
         )
 
 
         Text(
             text =
-                "Your household bills are maintained in Google Sheets.",
+                "💷",
+
             style =
-                MaterialTheme.typography.bodyLarge
+                MaterialTheme
+                    .typography
+                    .displaySmall
         )
 
 
         Spacer(
-            modifier = Modifier.height(25.dp)
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
+        Text(
+            text =
+                "Household Bills",
+
+            style =
+                MaterialTheme
+                    .typography
+                    .headlineMedium
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(6.dp)
+        )
+
+
+        Text(
+            text =
+                "Bills - Google Sheets",
+
+            style =
+                MaterialTheme
+                    .typography
+                    .titleMedium
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(20.dp)
         )
 
 
@@ -795,13 +1172,15 @@ fun BillsScreen(
         ) {
 
             Text(
-                text = "OPEN & EDIT GOOGLE SHEET"
+                text =
+                    "OPEN & EDIT GOOGLE SHEET"
             )
         }
 
 
         Spacer(
-            modifier = Modifier.height(12.dp)
+            modifier =
+                Modifier.height(12.dp)
         )
 
 
@@ -818,7 +1197,9 @@ fun BillsScreen(
                 !loading
         ) {
 
-            if (loading) {
+            if (
+                loading
+            ) {
 
                 CircularProgressIndicator(
                     modifier =
@@ -829,31 +1210,240 @@ fun BillsScreen(
 
                 Text(
                     text =
-                        if (googleConnected) {
+                        if (
+                            googleConnected
+                        ) {
 
-                            "REFRESH GOOGLE SHEETS"
+                            "REFRESH THIS WEEK'S BILLS"
 
                         } else {
 
-                            "CONNECT GOOGLE SHEETS"
+                            "THIS WEEK'S BILLS"
                         }
                 )
             }
         }
 
 
-        if (sheetStatus != null) {
+        if (
+            sheetStatus != null
+        ) {
 
             Spacer(
-                modifier = Modifier.height(12.dp)
+                modifier =
+                    Modifier.height(12.dp)
             )
 
 
             Text(
-                text = sheetStatus,
+                text =
+                    sheetStatus,
 
                 style =
-                    MaterialTheme.typography.bodyMedium
+                    MaterialTheme
+                        .typography
+                        .bodyMedium
+            )
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(25.dp)
+        )
+
+
+        if (
+            googleConnected &&
+            !loading
+        ) {
+
+            ThisWeeksBillsSection(
+                bills =
+                    thisWeeksBills
+            )
+        }
+    }
+}
+
+
+/* -------------------------------------------------- */
+/* THIS WEEK'S BILLS                                  */
+/* -------------------------------------------------- */
+
+@Composable
+fun ThisWeeksBillsSection(
+    bills: List<Bill>
+) {
+
+    val total =
+        bills.sumOf {
+            it.amount
+        }
+
+
+    Column(
+        modifier =
+            Modifier.fillMaxWidth()
+    ) {
+
+        Text(
+            text =
+                "This Week's Bills",
+
+            style =
+                MaterialTheme
+                    .typography
+                    .headlineSmall
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(5.dp)
+        )
+
+
+        if (
+            bills.isEmpty()
+        ) {
+
+            Text(
+                text =
+                    "Nothing is due this week.",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .bodyLarge
+            )
+
+        } else {
+
+            Text(
+                text =
+                    "${bills.size} bill(s) • ${formatMoney(total)} total",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .bodyMedium
+            )
+
+
+            Spacer(
+                modifier =
+                    Modifier.height(12.dp)
+            )
+
+
+            LazyColumn(
+                verticalArrangement =
+                    Arrangement.spacedBy(8.dp),
+
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(
+                            (bills.size * 72)
+                                .coerceAtMost(360)
+                                .dp
+                        )
+            ) {
+
+                items(
+                    bills
+                ) { bill ->
+
+                    BillRow(
+                        bill =
+                            bill
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+/* -------------------------------------------------- */
+/* BILL ROW                                           */
+/* -------------------------------------------------- */
+
+@Composable
+fun BillRow(
+    bill: Bill
+) {
+
+    val dateFormatter =
+        DateTimeFormatter.ofPattern(
+            "EEE d MMM"
+        )
+
+
+    Card(
+        modifier =
+            Modifier.fillMaxWidth(),
+
+        shape =
+            RoundedCornerShape(14.dp),
+
+        elevation =
+            CardDefaults.cardElevation(
+                defaultElevation = 2.dp
+            )
+    ) {
+
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+
+            Column(
+                modifier =
+                    Modifier.weight(1f)
+            ) {
+
+                Text(
+                    text =
+                        bill.dueDate.format(
+                            dateFormatter
+                        ),
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .bodyMedium
+                )
+
+
+                Text(
+                    text =
+                        bill.name,
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .titleMedium
+                )
+            }
+
+
+            Text(
+                text =
+                    formatMoney(
+                        bill.amount
+                    ),
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .titleMedium
             )
         }
     }
@@ -873,10 +1463,6 @@ fun openBillsSpreadsheet(
                 "1C-vyDVpJHEuQlkSGV3G2Pd_5LqyUKhns-fxHe_F-PeQ" +
                 "/edit?gid=1903279729"
 
-
-    /*
-     * Open directly in Google Sheets.
-     */
 
     val sheetsIntent =
         Intent(
@@ -901,12 +1487,6 @@ fun openBillsSpreadsheet(
     } catch (
         e: ActivityNotFoundException
     ) {
-
-        /*
-         * Google Sheets isn't installed.
-         * Open the native Google Sheet in
-         * the normal browser instead.
-         */
 
         val browserIntent =
             Intent(
@@ -940,6 +1520,23 @@ fun openBillsSpreadsheet(
 
 
 /* -------------------------------------------------- */
+/* MONEY                                              */
+/* -------------------------------------------------- */
+
+fun formatMoney(
+    amount: Double
+): String {
+
+    return "£" +
+            String.format(
+                java.util.Locale.UK,
+                "%.2f",
+                amount
+            )
+}
+
+
+/* -------------------------------------------------- */
 /* NOTES SCREEN                                       */
 /* -------------------------------------------------- */
 
@@ -949,15 +1546,20 @@ fun NotesScreen(
 ) {
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(20.dp)
     ) {
 
         Text(
-            text = "‹  Notes",
+            text =
+                "‹  Notes",
+
             style =
-                MaterialTheme.typography.headlineLarge,
+                MaterialTheme
+                    .typography
+                    .headlineLarge,
 
             modifier =
                 Modifier.clickable {
@@ -967,31 +1569,42 @@ fun NotesScreen(
 
 
         Spacer(
-            modifier = Modifier.height(30.dp)
+            modifier =
+                Modifier.height(30.dp)
         )
 
 
         Text(
-            text = "📝",
+            text =
+                "📝",
+
             style =
-                MaterialTheme.typography.displaySmall
+                MaterialTheme
+                    .typography
+                    .displaySmall
         )
 
 
         Spacer(
-            modifier = Modifier.height(10.dp)
+            modifier =
+                Modifier.height(10.dp)
         )
 
 
         Text(
-            text = "Notes",
+            text =
+                "Notes",
+
             style =
-                MaterialTheme.typography.headlineMedium
+                MaterialTheme
+                    .typography
+                    .headlineMedium
         )
 
 
         Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(8.dp)
         )
 
 
@@ -1000,19 +1613,26 @@ fun NotesScreen(
                 "Your Samsung Notes integration will be added here.",
 
             style =
-                MaterialTheme.typography.bodyLarge
+                MaterialTheme
+                    .typography
+                    .bodyLarge
         )
 
 
         Spacer(
-            modifier = Modifier.height(30.dp)
+            modifier =
+                Modifier.height(30.dp)
         )
 
 
         Text(
-            text = "Coming next.",
+            text =
+                "Coming next.",
+
             style =
-                MaterialTheme.typography.bodyMedium
+                MaterialTheme
+                    .typography
+                    .bodyMedium
         )
     }
 }
