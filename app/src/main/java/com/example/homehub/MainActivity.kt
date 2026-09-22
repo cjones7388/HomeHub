@@ -1533,17 +1533,8 @@ fun formatMoney(
 private const val RECEIPTS_PREFS =
     "homehub_receipts"
 
-private const val INITIAL_BALANCE_KEY =
-    "initial_balance"
-
 private const val TRANSACTIONS_KEY =
     "transactions"
-
-
-data class StoredTransaction(
-    val description: String,
-    val amount: Double
-)
 
 
 fun loadTransactions(
@@ -1675,30 +1666,6 @@ fun ReceiptsScreen(
         }
 
 
-    var initialBalanceText by remember {
-
-        mutableStateOf(
-            if (
-                preferences.contains(
-                    INITIAL_BALANCE_KEY
-                )
-            ) {
-
-                formatMoney(
-                    preferences.getFloat(
-                        INITIAL_BALANCE_KEY,
-                        0f
-                    ).toDouble()
-                )
-
-            } else {
-
-                ""
-            }
-        )
-    }
-
-
     var transactions by remember {
 
         mutableStateOf(
@@ -1729,20 +1696,10 @@ fun ReceiptsScreen(
     }
 
 
-    val initialBalance =
-        preferences
-            .getFloat(
-                INITIAL_BALANCE_KEY,
-                0f
-            )
-            .toDouble()
-
-
     val runningBalance =
-        initialBalance +
-                transactions.sumOf {
-                    it.amount
-                }
+        transactions.sumOf {
+            it.amount
+        }
 
 
     val recentTransactionIndices =
@@ -1768,33 +1725,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(4.dp)
-        )
-
-
-        Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            horizontalArrangement =
-                Arrangement.Center
-        ) {
-
-            Text(
-                text =
-                    "🧾",
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .displayLarge
-            )
-        }
-
-
-        Spacer(
-            modifier =
-                Modifier.height(4.dp)
+                Modifier.height(2.dp)
         )
 
 
@@ -1820,7 +1751,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(15.dp)
+                Modifier.height(8.dp)
         )
 
 
@@ -1829,38 +1760,38 @@ fun ReceiptsScreen(
                 Modifier.fillMaxWidth(),
 
             shape =
-                RoundedCornerShape(16.dp),
+                RoundedCornerShape(14.dp),
 
             elevation =
                 CardDefaults.cardElevation(
-                    defaultElevation = 3.dp
+                    defaultElevation = 2.dp
                 )
         ) {
 
-            Column(
+            Row(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(
+                            horizontal = 14.dp,
+                            vertical = 8.dp
+                        ),
 
-                horizontalAlignment =
-                    Alignment.CenterHorizontally
+                verticalAlignment =
+                    Alignment.CenterVertically
             ) {
 
                 Text(
                     text =
-                        "CURRENT ACCOUNT BALANCE",
+                        "Balance",
 
                     style =
                         MaterialTheme
                             .typography
-                            .labelLarge
-                )
+                            .titleMedium,
 
-
-                Spacer(
                     modifier =
-                        Modifier.height(4.dp)
+                        Modifier.weight(1f)
                 )
 
 
@@ -1873,7 +1804,7 @@ fun ReceiptsScreen(
                     style =
                         MaterialTheme
                             .typography
-                            .displaySmall
+                            .headlineSmall
                 )
             }
         }
@@ -1881,100 +1812,8 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(15.dp)
+                Modifier.height(8.dp)
         )
-
-
-        if (
-            !preferences.contains(
-                INITIAL_BALANCE_KEY
-            )
-        ) {
-
-            OutlinedTextField(
-                value =
-                    initialBalanceText,
-
-                onValueChange = {
-                    initialBalanceText = it
-                },
-
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                label = {
-                    Text(
-                        text =
-                            "Initial balance"
-                    )
-                },
-
-                singleLine =
-                    true
-            )
-
-
-            Spacer(
-                modifier =
-                    Modifier.height(8.dp)
-            )
-
-
-            Button(
-                onClick = {
-
-                    val balance =
-                        initialBalanceText
-                            .replace(
-                                "£",
-                                ""
-                            )
-                            .replace(
-                                ",",
-                                ""
-                            )
-                            .trim()
-                            .toDoubleOrNull()
-
-
-                    if (
-                        balance != null
-                    ) {
-
-                        preferences
-                            .edit()
-                            .putFloat(
-                                INITIAL_BALANCE_KEY,
-                                balance.toFloat()
-                            )
-                            .apply()
-
-
-                        initialBalanceText =
-                            formatMoney(
-                                balance
-                            )
-                    }
-                },
-
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(55.dp)
-            ) {
-
-                Text(
-                    text =
-                        "SET INITIAL BALANCE"
-                )
-            }
-
-
-            Spacer(
-                modifier =
-                    Modifier.height(15.dp)
-            )
-        }
 
 
         OutlinedTextField(
@@ -2002,7 +1841,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(6.dp)
         )
 
 
@@ -2043,7 +1882,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(6.dp)
         )
 
 
@@ -2063,7 +1902,7 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .weight(1f)
-                        .height(55.dp)
+                        .height(50.dp)
             ) {
 
                 Text(
@@ -2090,7 +1929,7 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .weight(1f)
-                        .height(55.dp)
+                        .height(50.dp)
             ) {
 
                 Text(
@@ -2112,7 +1951,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(6.dp)
         )
 
 
@@ -2190,12 +2029,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(55.dp),
-
-            enabled =
-                preferences.contains(
-                    INITIAL_BALANCE_KEY
-                )
+                    .height(50.dp)
         ) {
 
             Text(
@@ -2207,24 +2041,33 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(15.dp)
+                Modifier.height(8.dp)
         )
 
 
-        Text(
-            text =
-                "Last 30 Entries",
+        Row(
+            modifier =
+                Modifier.fillMaxWidth(),
 
-            style =
-                MaterialTheme
-                    .typography
-                    .headlineSmall
-        )
+            horizontalArrangement =
+                Arrangement.Center
+        ) {
+
+            Text(
+                text =
+                    "Last 30 Entries",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .headlineSmall
+            )
+        }
 
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(6.dp)
         )
 
 
@@ -2232,15 +2075,29 @@ fun ReceiptsScreen(
             recentTransactionIndices.isEmpty()
         ) {
 
-            Text(
-                text =
-                    "No transactions yet.",
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(2f),
 
-                style =
-                    MaterialTheme
-                        .typography
-                        .bodyLarge
-            )
+                horizontalAlignment =
+                    Alignment.CenterHorizontally,
+
+                verticalArrangement =
+                    Arrangement.Top
+            ) {
+
+                Text(
+                    text =
+                        "No transactions yet.",
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .bodyLarge
+                )
+            }
 
         } else {
 
@@ -2248,7 +2105,7 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(2f),
 
                 verticalArrangement =
                     Arrangement.spacedBy(8.dp)
@@ -2265,14 +2122,13 @@ fun ReceiptsScreen(
 
 
                     val balanceAfter =
-                        initialBalance +
-                                transactions
-                                    .take(
-                                        transactionIndex + 1
-                                    )
-                                    .sumOf {
-                                        it.amount
-                                    }
+                        transactions
+                            .take(
+                                transactionIndex + 1
+                            )
+                            .sumOf {
+                                it.amount
+                            }
 
 
                     AccountTransactionRow(
@@ -2317,7 +2173,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(6.dp)
         )
 
 
@@ -2329,7 +2185,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(55.dp)
+                    .height(50.dp)
         ) {
 
             Text(
@@ -2361,7 +2217,7 @@ fun ReceiptsScreen(
 
                 Text(
                     text =
-                        "This will delete the initial balance and all transactions."
+                        "This will delete all transactions and reset the balance to £0.00."
                 )
             },
 
@@ -2375,9 +2231,6 @@ fun ReceiptsScreen(
                             .clear()
                             .apply()
 
-
-                        initialBalanceText =
-                            ""
 
                         transactions =
                             emptyList()
@@ -2447,7 +2300,7 @@ fun AccountTransactionRow(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(14.dp)
+                    .padding(10.dp)
         ) {
 
             Row(
@@ -2521,7 +2374,7 @@ fun AccountTransactionRow(
 
             Spacer(
                 modifier =
-                    Modifier.height(6.dp)
+                    Modifier.height(2.dp)
             )
 
 
