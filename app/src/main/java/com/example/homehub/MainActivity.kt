@@ -788,13 +788,6 @@ fun HomeHubApp(
     }
 
 
-    /*
-     * IMPORTANT:
-     *
-     * The transaction list now lives here so that
-     * both Receipts and Bank Import can use the
-     * same data.
-     */
     var transactions by remember {
         mutableStateOf(
             loadTransactions(
@@ -1927,13 +1920,15 @@ fun upsertBankTransactions(
         /*
          * FIRST:
          *
-         * Look for the unique bank transaction ID.
+         * The bank transaction ID is the strongest
+         * possible match.
          */
         val alreadyExistsById =
             bankTransaction.id.isNotBlank() &&
                     updated.any {
 
                         it.bankTransactionId.isNotBlank() &&
+
                                 it.bankTransactionId ==
                                 bankTransaction.id
                     }
@@ -1950,11 +1945,15 @@ fun upsertBankTransactions(
         /*
          * SECOND:
          *
-         * For manual entries that don't have a bank ID,
-         * compare date + description + amount.
+         * Match an existing transaction using:
+         *
+         * date + description + amount
+         *
+         * This prevents the same bank transaction
+         * being imported twice.
          */
-        val alreadyExistsByDetails =
-            updated.any {
+        val exactMatchIndex =
+            updated.indexOfFirst {
 
                 it.description.equals(
                     bankTransaction.description,
@@ -1972,15 +1971,98 @@ fun upsertBankTransactions(
 
 
         if (
-            alreadyExistsByDetails
+            exactMatchIndex >= 0
         ) {
+
+            /*
+             * The transaction already exists.
+             *
+             * If it was originally entered manually,
+             * it may not have a bank ID yet.
+             *
+             * Attach the bank ID without creating
+             * another transaction.
+             */
+            if (
+                updated[exactMatchIndex]
+                    .bankTransactionId
+                    .isBlank() &&
+
+                bankTransaction.id.isNotBlank()
+            ) {
+
+                updated[exactMatchIndex] =
+                    updated[exactMatchIndex].copy(
+                        bankTransactionId =
+                            bankTransaction.id
+                    )
+            }
+
 
             return@forEach
         }
 
 
         /*
-         * NEW TRANSACTION
+         * THIRD:
+         *
+         * Deal with old manual entries created before
+         * automatic dates were added.
+         *
+         * These have:
+         *
+         * date = ""
+         * bankTransactionId = ""
+         *
+         * If description + amount match, upgrade
+         * that existing record instead of adding a
+         * duplicate.
+         */
+        val legacyMatchIndex =
+            updated.indexOfFirst {
+
+                it.date.isBlank() &&
+
+                        it.bankTransactionId.isBlank() &&
+
+                        it.description.equals(
+                            bankTransaction.description,
+                            ignoreCase = true
+                        ) &&
+
+                        kotlin.math.abs(
+                            it.amount -
+                                    bankTransaction.amount
+                        ) < 0.005
+            }
+
+
+        if (
+            legacyMatchIndex >= 0
+        ) {
+
+            updated[legacyMatchIndex] =
+                updated[legacyMatchIndex].copy(
+
+                    date =
+                        bankTransaction.date,
+
+                    bankTransactionId =
+                        bankTransaction.id
+                )
+
+
+            return@forEach
+        }
+
+
+        /*
+         * FOURTH:
+         *
+         * Nothing matched.
+         *
+         * This is a genuinely new bank transaction,
+         * so add it to the existing list.
          */
         updated.add(
             AccountTransaction(
@@ -2003,6 +2085,11 @@ fun upsertBankTransactions(
     }
 
 
+    /*
+     * Save the complete updated list.
+     *
+     * Existing transactions are retained.
+     */
     saveTransactions(
         context,
         updated
@@ -2756,6 +2843,10 @@ fun ReceiptsScreen(
                                 amount =
                                     signedAmount,
 
+                                /*
+                                 * When editing, keep the
+                                 * original date.
+                                 */
                                 date =
                                     updatedTransactions[
                                         editingIndex
@@ -2769,13 +2860,29 @@ fun ReceiptsScreen(
 
                     } else {
 
+                        /*
+                         * NEW MANUAL ENTRY
+                         *
+                         * Automatically record today's
+                         * date when the entry is created.
+                         */
                         updatedTransactions.add(
                             AccountTransaction(
                                 description =
                                     descriptionText.trim(),
 
                                 amount =
-                                    signedAmount
+                                    signedAmount,
+
+                                date =
+                                    LocalDate.now().format(
+                                        DateTimeFormatter.ofPattern(
+                                            "dd/MM/yyyy"
+                                        )
+                                    ),
+
+                                bankTransactionId =
+                                    ""
                             )
                         )
                     }
@@ -3192,7 +3299,11 @@ fun BankImportScreen(
     onImportComplete:
         (List<BankTransaction>) -> Unit
 ) {
-    val keyboardController = LocalSoftwareKeyboardController.current
+
+    val keyboardController =
+        LocalSoftwareKeyboardController.current
+
+
     var transactionCount by remember {
         mutableStateOf("10")
     }
@@ -3508,7 +3619,9 @@ fun BankImportScreen(
 
         Button(
             onClick = {
+
                 readTestBankTransactions()
+
                 keyboardController?.hide()
             },
 
