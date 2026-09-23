@@ -1,5 +1,4 @@
 package com.example.homehub
-
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +62,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
@@ -82,9 +82,6 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
-import kotlin.math.abs
-import kotlin.math.max
-
 
 private const val SPREADSHEET_ID =
     "1C-vyDVpJHEuQlkSGV3G2Pd_5LqyUKhns-fxHe_F-PeQ"
@@ -141,7 +138,6 @@ data class AccountTransaction(
     val bankTransactionId: String = "",
     val upstreamBankTransactionId: String = ""
 )
-
 
 data class BankTransaction(
     val id: String,
@@ -1738,63 +1734,34 @@ fun loadTransactions(
         mutableListOf<AccountTransaction>()
 
     try {
+        val array = JSONArray(jsonText)
 
-        val array =
-            JSONArray(
-                jsonText
-            )
-
-        for (
-        i in 0 until array.length()
-        ) {
-
-            val item =
-                array.getJSONObject(i)
-
+        for (i in 0 until array.length()) {
+            val item = array.getJSONObject(i)
 
             transactions.add(
                 AccountTransaction(
                     description =
-                        item.optString(
-                            "description",
-                            ""
-                        ),
+                        item.optString("description", ""),
 
                     amount =
-                        item.optDouble(
-                            "amount",
-                            0.0
-                        ),
+                        item.optDouble("amount", 0.0),
 
                     date =
-                        item.optString(
-                            "date",
-                            ""
-                        ),
+                        item.optString("date", ""),
 
                     source =
-                        item.optString(
-                            "source",
-                            "MANUAL"
-                        ),
+                        item.optString("source", "MANUAL"),
 
                     bankTransactionId =
-                        item.optString(
-                            "bankTransactionId",
-                            ""
-                        ),
+                        item.optString("bankTransactionId", ""),
 
                     upstreamBankTransactionId =
-                        item.optString(
-                            "upstreamBankTransactionId",
-                            ""
-                        )
+                        item.optString("upstreamBankTransactionId", "")
                 )
             )
         }
-
     } catch (e: Exception) {
-
         return mutableListOf()
     }
 
@@ -1807,48 +1774,20 @@ fun saveTransactions(
     transactions: List<AccountTransaction>
 ) {
 
-    val array =
-        JSONArray()
-
+    val array = JSONArray()
 
     transactions.forEach { transaction ->
-
         array.put(
             JSONObject().apply {
-
-                put(
-                    "description",
-                    transaction.description
-                )
-
-                put(
-                    "amount",
-                    transaction.amount
-                )
-
-                put(
-                    "date",
-                    transaction.date
-                )
-
-                put(
-                    "source",
-                    transaction.source
-                )
-
-                put(
-                    "bankTransactionId",
-                    transaction.bankTransactionId
-                )
-
-                put(
-                    "upstreamBankTransactionId",
-                    transaction.upstreamBankTransactionId
-                )
+                put("description", transaction.description)
+                put("amount", transaction.amount)
+                put("date", transaction.date)
+                put("source", transaction.source)
+                put("bankTransactionId", transaction.bankTransactionId)
+                put("upstreamBankTransactionId", transaction.upstreamBankTransactionId)
             }
         )
     }
-
 
     context
         .getSharedPreferences(
@@ -1864,1110 +1803,376 @@ fun saveTransactions(
 }
 
 
-/* -------------------------------------------------- */
-/* TRANSACTION MATCHING                               */
-/* -------------------------------------------------- */
+private val TRANSACTION_NOISE_TOKENS = setOf(
+    "payment", "card", "debit", "credit", "purchase", "online", "pos",
+    "transfer", "direct", "standing", "order", "cash", "withdrawal",
+    "transaction", "ref", "reference", "uk", "gb"
+)
 
-fun normaliseTransactionText(
-    text: String
-): String {
-
-    return text
+private fun transactionWords(text: String): Set<String> =
+    text
         .lowercase()
-        .replace(
-            Regex("[^a-z0-9]+"),
-            ""
-        )
-}
-
-
-private fun transactionTextTokens(
-    text: String
-): Set<String> {
-
-    val ignoredTokens =
-        setOf(
-            "payment",
-            "card",
-            "transfer",
-            "direct",
-            "debit",
-            "purchase",
-            "online",
-            "uk",
-            "gb",
-            "pos",
-            "credit",
-            "transaction",
-            "cash",
-            "withdrawal"
-        )
-
-
-    return text
-        .lowercase()
-        .split(
-            Regex("[^a-z0-9]+")
-        )
-        .map {
-            it.trim()
-        }
-        .filter {
-            it.length >= 3 &&
-                    it !in ignoredTokens
-        }
+        .split(Regex("[^a-z0-9]+"))
+        .map { it.trim() }
+        .filter { it.length >= 3 }
+        .filterNot { it in TRANSACTION_NOISE_TOKENS }
         .toSet()
+
+private fun normaliseTransactionText(text: String): String =
+    text.lowercase().replace(Regex("[^a-z0-9]+"), "")
+
+private fun levenshteinDistance(a: String, b: String): Int {
+    if (a == b) return 0
+    if (a.isEmpty()) return b.length
+    if (b.isEmpty()) return a.length
+
+    var previous = IntArray(b.length + 1) { it }
+    var current = IntArray(b.length + 1)
+
+    for (i in a.indices) {
+        current[0] = i + 1
+        for (j in b.indices) {
+            val cost = if (a[i] == b[j]) 0 else 1
+            current[j + 1] = minOf(
+                current[j] + 1,
+                previous[j + 1] + 1,
+                previous[j] + cost
+            )
+        }
+        val swap = previous
+        previous = current
+        current = swap
+    }
+    return previous[b.length]
 }
 
+private fun fuzzyTransactionWordScore(
+    manualWord: String,
+    bankWord: String
+): Int {
+    if (manualWord.length < 3 || bankWord.length < 3) return 0
 
-private fun merchantTextMatches(
-    manualDescription: String,
-    bankDescription: String,
-    counterparty: String,
-    merchantName: String
-): Boolean {
+    // An exact word is the clearest possible match.
+    if (manualWord == bankWord) return 100
 
-    val manualNormalised =
-        normaliseTransactionText(
-            manualDescription
-        )
+    // Handles bank additions such as HOME -> HOME123 or TESCO -> TESCOSTORES.
+    if (manualWord.length >= 4 && bankWord.contains(manualWord)) return 94
+    if (bankWord.length >= 4 && manualWord.contains(bankWord)) return 92
 
+    val shorter = minOf(manualWord.length, bankWord.length)
+    val longer = maxOf(manualWord.length, bankWord.length)
 
-    if (
-        manualNormalised.length < 4
-    ) {
+    if (shorter < 4 || longer > shorter + 3) return 0
 
-        return false
+    val distance = levenshteinDistance(manualWord, bankWord)
+
+    return when {
+        distance == 1 -> 88
+        distance == 2 && shorter >= 6 -> 82
+        else -> 0
     }
-
-
-    val manualTokens =
-        transactionTextTokens(
-            manualDescription
-        )
-
-
-    val candidates =
-        listOf(
-            bankDescription,
-            counterparty,
-            merchantName
-        )
-            .filter {
-                it.isNotBlank()
-            }
-
-
-    for (
-    candidate in candidates
-    ) {
-
-        val candidateNormalised =
-            normaliseTransactionText(
-                candidate
-            )
-
-
-        if (
-            candidateNormalised.length < 4
-        ) {
-
-            continue
-        }
-
-
-        if (
-            candidateNormalised ==
-            manualNormalised
-        ) {
-
-            return true
-        }
-
-
-        if (
-            candidateNormalised.contains(
-                manualNormalised
-            ) ||
-            manualNormalised.contains(
-                candidateNormalised
-            )
-        ) {
-
-            return true
-        }
-
-
-        val candidateTokens =
-            transactionTextTokens(
-                candidate
-            )
-
-
-        if (
-            manualTokens.isNotEmpty() &&
-            manualTokens
-                .intersect(
-                    candidateTokens
-                )
-                .isNotEmpty()
-        ) {
-
-            return true
-        }
-    }
-
-
-    return false
 }
-
 
 private fun transactionMatchScore(
     manual: AccountTransaction,
     bank: BankTransaction
 ): Int {
-
-    if (
-        abs(
-            manual.amount -
-                    bank.amount
-        ) >= 0.005
-    ) {
-
-        return 0
-    }
-
-
-    if (
-        manual.bankTransactionId.isNotBlank() ||
+    // Once a HomeHub entry already has a bank ID, it must not be reused.
+    if (manual.bankTransactionId.isNotBlank() ||
         manual.upstreamBankTransactionId.isNotBlank()
-    ) {
+    ) return 0
 
-        return 0
-    }
+    // Signed amount is mandatory. Money out cannot match money in.
+    if (kotlin.math.abs(manual.amount - bank.amount) >= 0.005) return 0
 
+    val manualWords = transactionWords(manual.description)
+    if (manualWords.isEmpty()) return 0
 
-    val manualNormalised =
-        normaliseTransactionText(
-            manual.description
-        )
+    val candidates = listOf(
+        bank.merchantName,
+        bank.counterparty,
+        bank.description
+    ).filter { it.isNotBlank() }
 
+    var best = 0
 
-    val manualTokens =
-        transactionTextTokens(
-            manual.description
-        )
+    for (candidate in candidates) {
+        val bankWords = transactionWords(candidate)
+        if (bankWords.isEmpty()) continue
 
-
-    if (
-        manualNormalised.isBlank()
-    ) {
-
-        return 0
-    }
-
-
-    val candidates =
-        listOf(
-            bank.merchantName,
-            bank.counterparty,
-            bank.description
-        )
-            .filter {
-                it.isNotBlank()
-            }
-
-
-    var bestScore =
-        0
-
-
-    for (
-    candidate in candidates
-    ) {
-
-        val candidateNormalised =
-            normaliseTransactionText(
-                candidate
+        // THIS is the important part: individual words are compared directly.
+        // So "Home Bargains" matches "HOME BARGAINS LTD 1234" and
+        // "Note" matches "NOTE" regardless of the surrounding bank text.
+        val exactWords = manualWords.intersect(bankWords)
+        if (exactWords.isNotEmpty()) {
+            val longestExactWord = exactWords.maxOf { it.length }
+            best = maxOf(
+                best,
+                when {
+                    exactWords.size >= 2 -> 100
+                    longestExactWord >= 5 -> 98
+                    else -> 96
+                }
             )
-
-
-        if (
-            candidateNormalised.isBlank()
-        ) {
-
-            continue
         }
 
+        val manualNormalised = normaliseTransactionText(manual.description)
+        val candidateNormalised = normaliseTransactionText(candidate)
 
-        if (
-            candidateNormalised ==
-            manualNormalised
-        ) {
-
-            bestScore =
-                max(
-                    bestScore,
-                    100
-                )
-        }
-
-
-        if (
+        if (manualNormalised == candidateNormalised && manualNormalised.length >= 3) {
+            best = maxOf(best, 100)
+        } else if (
             manualNormalised.length >= 4 &&
-            (
-                    candidateNormalised.contains(
-                        manualNormalised
-                    ) ||
-                            manualNormalised.contains(
-                                candidateNormalised
-                            )
-                    )
+            candidateNormalised.length >= 4 &&
+            (candidateNormalised.contains(manualNormalised) ||
+                    manualNormalised.contains(candidateNormalised))
         ) {
-
-            bestScore =
-                max(
-                    bestScore,
-                    80
-                )
+            best = maxOf(best, 94)
         }
 
-
-        val candidateTokens =
-            transactionTextTokens(
-                candidate
-            )
-
-
-        val overlap =
-            manualTokens
-                .intersect(
-                    candidateTokens
+        // Fuzzy individual-word matching for small spelling differences.
+        for (manualWord in manualWords) {
+            for (bankWord in bankWords) {
+                best = maxOf(
+                    best,
+                    fuzzyTransactionWordScore(manualWord, bankWord)
                 )
-
-
-        if (
-            overlap.isNotEmpty()
-        ) {
-
-            bestScore =
-                max(
-                    bestScore,
-                    60
-                )
+            }
         }
     }
 
-
-    return bestScore
+    return best
 }
-
 
 fun findMatchingTransactionIndex(
     transactions: List<AccountTransaction>,
     bankTransaction: BankTransaction
 ): Int? {
+    val bankId = bankTransaction.id
+    val upstreamId = bankTransaction.upstreamTransactionId
 
-    val bankId =
-        bankTransaction.id
-
-    val upstreamId =
-        bankTransaction.upstreamTransactionId
-
-
-    if (
-        bankId.isNotBlank()
-    ) {
-
-        val idIndex =
-            transactions.indexOfFirst {
-
-                it.bankTransactionId ==
-                        bankId
-            }
-
-
-        if (
-            idIndex >= 0
-        ) {
-
-            return idIndex
+    if (bankId.isNotBlank()) {
+        val idIndex = transactions.indexOfFirst {
+            it.bankTransactionId == bankId
         }
+        if (idIndex >= 0) return idIndex
     }
 
-
-    if (
-        upstreamId.isNotBlank()
-    ) {
-
-        val upstreamIndex =
-            transactions.indexOfFirst {
-
-                it.upstreamBankTransactionId ==
-                        upstreamId
-            }
-
-
-        if (
-            upstreamIndex >= 0
-        ) {
-
-            return upstreamIndex
+    if (upstreamId.isNotBlank()) {
+        val upstreamIndex = transactions.indexOfFirst {
+            it.upstreamBankTransactionId == upstreamId
         }
+        if (upstreamIndex >= 0) return upstreamIndex
     }
 
+    val scored = transactions.mapIndexedNotNull { index, transaction ->
+        val score = transactionMatchScore(transaction, bankTransaction)
+        if (score > 0) index to score else null
+    }.sortedByDescending { it.second }
 
-    val scoredCandidates =
-        transactions
-            .mapIndexedNotNull { index, transaction ->
+    if (scored.isEmpty()) return null
 
-                val score =
-                    transactionMatchScore(
-                        transaction,
-                        bankTransaction
-                    )
+    val topScore = scored.first().second
+    if (topScore < 75) return null
 
+    // If two manual entries have exactly the same best match, don't guess.
+    if (scored.count { it.second == topScore } != 1) return null
 
-                if (
-                    score > 0
-                ) {
-
-                    Pair(
-                        index,
-                        score
-                    )
-
-                } else {
-
-                    null
-                }
-            }
-            .sortedByDescending {
-                it.second
-            }
-
-
-    if (
-        scoredCandidates.isEmpty()
-    ) {
-
-        return null
-    }
-
-
-    val highestScore =
-        scoredCandidates.first().second
-
-
-    if (
-        highestScore < 60
-    ) {
-
-        return null
-    }
-
-
-    val highestMatches =
-        scoredCandidates.count {
-            it.second == highestScore
-        }
-
-
-    if (
-        highestMatches != 1
-    ) {
-
-        return null
-    }
-
-
-    return scoredCandidates.first().first
+    return scored.first().first
 }
 
-
-/* -------------------------------------------------- */
-/* ENDUTE                                            */
-/* -------------------------------------------------- */
-
-private const val ENDUTE_API_BASE_URL =
-    "https://api.endute.com/v1"
-
-private const val ENDUTE_ACCOUNT_ID =
-    "86b25e34-4065-42c8-99f4-64ef55388dc0"
-
-private const val ENDUTE_SECURE_PREFS =
-    "homehub_endute_secure"
-
-private const val ENDUTE_API_KEY_PREF =
-    "endute_api_key_encrypted"
-
-private const val ENDUTE_KEYSTORE_ALIAS =
-    "homehub_endute_api_key"
-
+private const val ENDUTE_API_BASE_URL = "https://api.endute.com/v1"
+private const val ENDUTE_ACCOUNT_ID = "86b25e34-4065-42c8-99f4-64ef55388dc0"
+private const val ENDUTE_SECURE_PREFS = "homehub_endute_secure"
+private const val ENDUTE_API_KEY_PREF = "endute_api_key_encrypted"
+private const val ENDUTE_KEYSTORE_ALIAS = "homehub_endute_api_key"
 
 private fun getEnduteSecretKey(): SecretKey {
+    val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    val existing = keyStore.getKey(ENDUTE_KEYSTORE_ALIAS, null) as? SecretKey
+    if (existing != null) return existing
 
-    val keyStore =
-        KeyStore
-            .getInstance(
-                "AndroidKeyStore"
-            )
-            .apply {
-                load(null)
-            }
-
-
-    val existing =
-        keyStore.getKey(
-            ENDUTE_KEYSTORE_ALIAS,
-            null
-        ) as? SecretKey
-
-
-    if (
-        existing != null
-    ) {
-
-        return existing
-    }
-
-
-    val generator =
-        KeyGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_AES,
-            "AndroidKeyStore"
-        )
-
-
+    val generator = KeyGenerator.getInstance(
+        KeyProperties.KEY_ALGORITHM_AES,
+        "AndroidKeyStore"
+    )
     generator.init(
-
         KeyGenParameterSpec.Builder(
-
             ENDUTE_KEYSTORE_ALIAS,
-
-            KeyProperties.PURPOSE_ENCRYPT or
-                    KeyProperties.PURPOSE_DECRYPT
-
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
-
             .setKeySize(256)
-
-            .setBlockModes(
-                KeyProperties.BLOCK_MODE_GCM
-            )
-
-            .setEncryptionPaddings(
-                KeyProperties.ENCRYPTION_PADDING_NONE
-            )
-
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .build()
     )
-
-
     return generator.generateKey()
 }
 
+private fun hasStoredEnduteApiKey(context: Context): Boolean =
+    !context.getSharedPreferences(ENDUTE_SECURE_PREFS, Context.MODE_PRIVATE)
+        .getString(ENDUTE_API_KEY_PREF, null).isNullOrBlank()
 
-private fun hasStoredEnduteApiKey(
-    context: Context
-): Boolean =
+private fun saveEnduteApiKey(context: Context, apiKey: String) {
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, getEnduteSecretKey())
+    val encrypted = cipher.doFinal(apiKey.toByteArray(Charsets.UTF_8))
+    val combined = ByteArray(cipher.iv.size + encrypted.size)
+    System.arraycopy(cipher.iv, 0, combined, 0, cipher.iv.size)
+    System.arraycopy(encrypted, 0, combined, cipher.iv.size, encrypted.size)
 
-    !context
-        .getSharedPreferences(
-            ENDUTE_SECURE_PREFS,
-            Context.MODE_PRIVATE
-        )
-        .getString(
-            ENDUTE_API_KEY_PREF,
-            null
-        )
-        .isNullOrBlank()
-
-
-private fun saveEnduteApiKey(
-    context: Context,
-    apiKey: String
-) {
-
-    val cipher =
-        Cipher.getInstance(
-            "AES/GCM/NoPadding"
-        )
-
-
-    cipher.init(
-        Cipher.ENCRYPT_MODE,
-        getEnduteSecretKey()
-    )
-
-
-    val encrypted =
-        cipher.doFinal(
-            apiKey.toByteArray(
-                Charsets.UTF_8
-            )
-        )
-
-
-    val combined =
-        ByteArray(
-            cipher.iv.size +
-                    encrypted.size
-        )
-
-
-    System.arraycopy(
-        cipher.iv,
-        0,
-        combined,
-        0,
-        cipher.iv.size
-    )
-
-
-    System.arraycopy(
-        encrypted,
-        0,
-        combined,
-        cipher.iv.size,
-        encrypted.size
-    )
-
-
-    context
-        .getSharedPreferences(
-            ENDUTE_SECURE_PREFS,
-            Context.MODE_PRIVATE
-        )
+    context.getSharedPreferences(ENDUTE_SECURE_PREFS, Context.MODE_PRIVATE)
         .edit()
-        .putString(
-            ENDUTE_API_KEY_PREF,
-            Base64.encodeToString(
-                combined,
-                Base64.NO_WRAP
-            )
-        )
+        .putString(ENDUTE_API_KEY_PREF, Base64.encodeToString(combined, Base64.NO_WRAP))
         .apply()
 }
 
+private fun loadEnduteApiKey(context: Context): String? {
+    val encoded = context.getSharedPreferences(ENDUTE_SECURE_PREFS, Context.MODE_PRIVATE)
+        .getString(ENDUTE_API_KEY_PREF, null)
+        ?: return null
 
-private fun loadEnduteApiKey(
-    context: Context
-): String? {
-
-    val encoded =
-        context
-            .getSharedPreferences(
-                ENDUTE_SECURE_PREFS,
-                Context.MODE_PRIVATE
-            )
-            .getString(
-                ENDUTE_API_KEY_PREF,
-                null
-            )
-            ?: return null
-
-
-    val combined =
-        Base64.decode(
-            encoded,
-            Base64.NO_WRAP
-        )
-
-
-    val ivLength =
-        12
-
-
-    if (
-        combined.size <= ivLength
-    ) {
-
-        throw Exception(
-            "Stored Endute API key is invalid. Please replace it."
-        )
+    val combined = Base64.decode(encoded, Base64.NO_WRAP)
+    val ivLength = 12
+    if (combined.size <= ivLength) {
+        throw Exception("Stored Endute API key is invalid. Please replace it.")
     }
 
-
-    val iv =
-        combined.copyOfRange(
-            0,
-            ivLength
-        )
-
-
-    val encrypted =
-        combined.copyOfRange(
-            ivLength,
-            combined.size
-        )
-
-
-    val cipher =
-        Cipher.getInstance(
-            "AES/GCM/NoPadding"
-        )
-
-
+    val iv = combined.copyOfRange(0, ivLength)
+    val encrypted = combined.copyOfRange(ivLength, combined.size)
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
     cipher.init(
         Cipher.DECRYPT_MODE,
         getEnduteSecretKey(),
-        GCMParameterSpec(
-            128,
-            iv
-        )
+        GCMParameterSpec(128, iv)
     )
-
-
-    return String(
-        cipher.doFinal(
-            encrypted
-        ),
-        Charsets.UTF_8
-    )
+    return String(cipher.doFinal(encrypted), Charsets.UTF_8)
 }
 
+private fun clearEnduteApiKey(context: Context) {
+    context.getSharedPreferences(ENDUTE_SECURE_PREFS, Context.MODE_PRIVATE)
+        .edit().remove(ENDUTE_API_KEY_PREF).apply()
 
-private fun clearEnduteApiKey(
-    context: Context
-) {
-
-    context
-        .getSharedPreferences(
-            ENDUTE_SECURE_PREFS,
-            Context.MODE_PRIVATE
-        )
-        .edit()
-        .remove(
-            ENDUTE_API_KEY_PREF
-        )
-        .apply()
-
-
-    val keyStore =
-        KeyStore
-            .getInstance(
-                "AndroidKeyStore"
-            )
-            .apply {
-                load(null)
-            }
-
-
-    if (
-        keyStore.containsAlias(
-            ENDUTE_KEYSTORE_ALIAS
-        )
-    ) {
-
-        keyStore.deleteEntry(
-            ENDUTE_KEYSTORE_ALIAS
-        )
+    val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    if (keyStore.containsAlias(ENDUTE_KEYSTORE_ALIAS)) {
+        keyStore.deleteEntry(ENDUTE_KEYSTORE_ALIAS)
     }
 }
 
-
-private fun makeEnduteRequest(
-    urlString: String,
-    apiKey: String
-): String {
-
-    val connection =
-        URL(urlString)
-            .openConnection() as HttpURLConnection
-
-
+private fun makeEnduteRequest(urlString: String, apiKey: String): String {
+    val connection = URL(urlString).openConnection() as HttpURLConnection
     try {
+        connection.requestMethod = "GET"
+        connection.setRequestProperty("Authorization", "Bearer $apiKey")
+        connection.setRequestProperty("Accept", "application/json")
+        connection.connectTimeout = 15000
+        connection.readTimeout = 30000
 
-        connection.requestMethod =
-            "GET"
-
-
-        connection.setRequestProperty(
-            "Authorization",
-            "Bearer $apiKey"
-        )
-
-
-        connection.setRequestProperty(
-            "Accept",
-            "application/json"
-        )
-
-
-        connection.connectTimeout =
-            15000
-
-
-        connection.readTimeout =
-            30000
-
-
-        val responseCode =
-            connection.responseCode
-
-
-        val responseText =
-            if (
-                responseCode in 200..299
-            ) {
-
-                connection
-                    .inputStream
-                    .bufferedReader()
-                    .use {
-                        it.readText()
-                    }
-
-            } else {
-
-                connection
-                    .errorStream
-                    ?.bufferedReader()
-                    ?.use {
-                        it.readText()
-                    }
-                    ?: ""
-            }
-
-
-        if (
-            responseCode !in 200..299
-        ) {
-
-            val apiMessage =
-                try {
-
-                    val json =
-                        JSONObject(
-                            responseText
-                        )
-
-
-                    json
-                        .optJSONObject(
-                            "error"
-                        )
-                        ?.optString(
-                            "message",
-                            json.optString(
-                                "message",
-                                ""
-                            )
-                        )
-                        ?: ""
-
-                } catch (
-                    _: Exception
-                ) {
-
-                    ""
-                }
-
-
-            val message =
-                when (
-                    responseCode
-                ) {
-
-                    401 ->
-                        "Endute API key is invalid or revoked. Replace it."
-
-                    403 ->
-                        "Endute access is not currently active."
-
-                    429 ->
-                        "Endute is temporarily rate-limiting requests. Try again shortly."
-
-                    else ->
-                        apiMessage.ifBlank {
-                            "Endute returned HTTP $responseCode."
-                        }
-                }
-
-
-            throw Exception(
-                message
-            )
+        val responseCode = connection.responseCode
+        val responseText = if (responseCode in 200..299) {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
         }
 
+        if (responseCode !in 200..299) {
+            val apiMessage = try {
+                val json = JSONObject(responseText)
+                json.optJSONObject("error")?.optString(
+                    "message",
+                    json.optString("message", "")
+                ) ?: ""
+            } catch (_: Exception) { "" }
 
+            val message = when (responseCode) {
+                401 -> "Endute API key is invalid or revoked. Replace it."
+                403 -> "Endute access is not currently active."
+                429 -> "Endute is temporarily rate-limiting requests. Try again shortly."
+                else -> apiMessage.ifBlank { "Endute returned HTTP $responseCode." }
+            }
+            throw Exception(message)
+        }
         return responseText
-
     } finally {
-
         connection.disconnect()
     }
 }
 
+private fun parseEnduteTransactions(responseText: String): Pair<JSONArray, String?> {
+    val trimmed = responseText.trim()
+    if (trimmed.startsWith("[")) return Pair(JSONArray(trimmed), null)
 
-private fun parseEnduteTransactions(
-    responseText: String
-): Pair<JSONArray, String?> {
-
-    val trimmed =
-        responseText.trim()
-
-
-    if (
-        trimmed.startsWith("[")
-    ) {
-
-        return Pair(
-            JSONArray(trimmed),
-            null
-        )
-    }
-
-
-    val json =
-        JSONObject(
-            trimmed
-        )
-
-
-    val transactions =
-        json.optJSONArray(
-            "transactions"
-        )
-            ?: json.optJSONArray(
-                "results"
-            )
-            ?: throw Exception(
-                "Endute transactions response did not contain transactions."
-            )
-
-
-    val next =
-        if (
-            json.isNull("next")
-        ) {
-
-            null
-
-        } else {
-
-            json
-                .optString(
-                    "next",
-                    ""
-                )
-                .takeIf {
-                    it.isNotBlank()
-                }
-        }
-
-
-    return Pair(
-        transactions,
-        next
-    )
+    val json = JSONObject(trimmed)
+    val transactions = json.optJSONArray("transactions")
+        ?: json.optJSONArray("results")
+        ?: throw Exception("Endute transactions response did not contain transactions.")
+    val next = if (json.isNull("next")) null else json.optString("next", "")
+        .takeIf { it.isNotBlank() }
+    return Pair(transactions, next)
 }
-
 
 private fun fetchEnduteTransactions(
     context: Context,
     requestedCount: Int
 ): List<BankTransaction> {
+    val apiKey = loadEnduteApiKey(context)?.trim()?.takeIf { it.isNotBlank() }
+        ?: throw Exception("Save your Endute API key first.")
+    val safeCount = requestedCount.coerceAtLeast(1)
 
-    val apiKey =
-        loadEnduteApiKey(context)
-            ?.trim()
-            ?.takeIf {
-                it.isNotBlank()
-            }
-            ?: throw Exception(
-                "Save your Endute API key first."
-            )
+    val transactions = mutableListOf<BankTransaction>()
+    val seenIds = mutableSetOf<String>()
+    var nextUrl: String? = "$ENDUTE_API_BASE_URL/accounts/$ENDUTE_ACCOUNT_ID/transactions"
 
-
-    val safeCount =
-        requestedCount.coerceAtLeast(
-            1
+    while (nextUrl != null && transactions.size < safeCount) {
+        val (page, pageNext) = parseEnduteTransactions(
+            makeEnduteRequest(nextUrl!!, apiKey)
         )
 
+        for (i in 0 until page.length()) {
+            if (transactions.size >= safeCount) break
+            val item = page.getJSONObject(i)
+            val id = item.optString("id", "")
+            if (id.isBlank() || !seenIds.add(id)) continue
 
-    val transactions =
-        mutableListOf<BankTransaction>()
+            val amountText = item.optString("amount", "")
+            val amount = amountText.toDoubleOrNull()
+                ?: item.optDouble("amount", Double.NaN)
+            if (amount.isNaN()) continue
 
-
-    val seenIds =
-        mutableSetOf<String>()
-
-
-    var nextUrl: String? =
-        "$ENDUTE_API_BASE_URL/accounts/$ENDUTE_ACCOUNT_ID/transactions"
-
-
-    while (
-        nextUrl != null &&
-        transactions.size < safeCount
-    ) {
-
-        val (
-            page,
-            pageNext
-        ) =
-            parseEnduteTransactions(
-                makeEnduteRequest(
-                    nextUrl!!,
-                    apiKey
-                )
-            )
-
-
-        for (
-        i in 0 until page.length()
-        ) {
-
-            if (
-                transactions.size >= safeCount
-            ) {
-
-                break
-            }
-
-
-            val item =
-                page.getJSONObject(i)
-
-
-            val id =
-                item.optString(
-                    "id",
-                    ""
-                )
-
-
-            if (
-                id.isBlank() ||
-                !seenIds.add(id)
-            ) {
-
-                continue
-            }
-
-
-            val amountText =
-                item.optString(
-                    "amount",
-                    ""
-                )
-
-
-            val amount =
-                amountText.toDoubleOrNull()
-                    ?: item.optDouble(
-                        "amount",
-                        Double.NaN
-                    )
-
-
-            if (
-                amount.isNaN()
-            ) {
-
-                continue
-            }
-
-
-            val description =
-                item
-                    .optString(
-                        "description",
-                        ""
-                    )
-                    .trim()
-                    .ifBlank {
-                        "Bank transaction"
-                    }
-
-
-            val date =
-                item
-                    .optString(
-                        "booking_date",
-                        ""
-                    )
-                    .ifBlank {
-                        item.optString(
-                            "value_date",
-                            ""
-                        )
-                    }
-
+            val description = item.optString("description", "")
+                .trim().ifBlank { "Bank transaction" }
+            val date = item.optString("booking_date", "")
+                .ifBlank { item.optString("value_date", "") }
 
             val counterparty =
-                item
-                    .optString(
-                        "counterparty",
-                        ""
-                    )
-                    .trim()
-
-
-            val enrichment =
-                item.optJSONObject(
-                    "enrichment"
-                )
-
+                item.optString("counterparty", "").trim()
 
             val merchantName =
-                enrichment
-                    ?.optString(
-                        "merchant_name",
-                        ""
-                    )
+                item.optJSONObject("enrichment")
+                    ?.optString("merchant_name", "")
                     ?.trim()
                     .orEmpty()
 
-
             val upstreamTransactionId =
-                item
-                    .optString(
-                        "upstream_transaction_id",
-                        ""
-                    )
-                    .trim()
-
+                item.optString("upstream_transaction_id", "").trim()
 
             transactions.add(
-
                 BankTransaction(
-
-                    id =
-                        id,
-
-                    description =
-                        description,
-
-                    amount =
-                        amount,
-
-                    date =
-                        date,
-
-                    upstreamTransactionId =
-                        upstreamTransactionId,
-
-                    counterparty =
-                        counterparty,
-
-                    merchantName =
-                        merchantName
+                    id = id,
+                    description = description,
+                    amount = amount,
+                    date = date,
+                    upstreamTransactionId = upstreamTransactionId,
+                    counterparty = counterparty,
+                    merchantName = merchantName
                 )
             )
         }
-
-
-        nextUrl =
-            pageNext
+        nextUrl = pageNext
     }
-
 
     return transactions
 }
-
 
 /* -------------------------------------------------- */
 /* RECEIPTS SCREEN                                    */
@@ -3044,9 +2249,7 @@ fun ReceiptsScreen(
         rememberLazyListState()
 
 
-    LaunchedEffect(
-        transactions.size
-    ) {
+    LaunchedEffect(transactions.size) {
 
         if (
             recentTransactionIndices.isNotEmpty()
@@ -3098,14 +2301,8 @@ fun ReceiptsScreen(
 
         val enteredAmount =
             amountText
-                .replace(
-                    "£",
-                    ""
-                )
-                .replace(
-                    ",",
-                    ""
-                )
+                .replace("£", "")
+                .replace(",", "")
                 .trim()
                 .toDoubleOrNull()
 
@@ -3123,7 +2320,7 @@ fun ReceiptsScreen(
 
 
         val targetAmount =
-            abs(
+            kotlin.math.abs(
                 enteredAmount
             )
 
@@ -3137,8 +2334,8 @@ fun ReceiptsScreen(
         val matches =
             recentTransactions.filter {
 
-                abs(
-                    abs(it.amount) -
+                kotlin.math.abs(
+                    kotlin.math.abs(it.amount) -
                             targetAmount
                 ) < 0.005
             }
@@ -3305,8 +2502,7 @@ fun ReceiptsScreen(
 
 
         Button(
-            onClick =
-                onBankSync,
+            onClick = onBankSync,
 
             modifier =
                 Modifier
@@ -3315,17 +2511,12 @@ fun ReceiptsScreen(
 
             colors =
                 ButtonDefaults.buttonColors(
-                    containerColor =
-                        HOMEHUB_SECONDARY,
-
-                    contentColor =
-                        HOMEHUB_PRIMARY
+                    containerColor = HOMEHUB_SECONDARY,
+                    contentColor = HOMEHUB_PRIMARY
                 )
         ) {
-
             Text(
-                text =
-                    "SYNC VIRGIN MONEY"
+                text = "SYNC VIRGIN MONEY"
             )
         }
 
@@ -3350,9 +2541,7 @@ fun ReceiptsScreen(
                 Modifier.fillMaxWidth(),
 
             placeholder = {
-                Text(
-                    "Description"
-                )
+                Text("Description")
             },
 
             singleLine =
@@ -3385,29 +2574,18 @@ fun ReceiptsScreen(
 
                 amountText =
                     it
-                        .replace(
-                            "£",
-                            ""
-                        )
-                        .replace(
-                            "+",
-                            ""
-                        )
-                        .replace(
-                            "-",
-                            "")
+                        .replace("£", "")
+                        .replace("+", "")
+                        .replace("-", "")
 
-                checkResult =
-                    null
+                checkResult = null
             },
 
             modifier =
                 Modifier.fillMaxWidth(),
 
             placeholder = {
-                Text(
-                    "Amount"
-                )
+                Text("Amount")
             },
 
             singleLine =
@@ -3692,17 +2870,15 @@ fun ReceiptsScreen(
                         updatedTransactions.indices
                     ) {
 
-                        val existingTransaction =
-                            updatedTransactions[
-                                editingIndex
-                            ]
+                        /* UPDATE EXISTING */
 
+                        val existingTransaction =
+                            updatedTransactions[editingIndex]
 
                         updatedTransactions[
                             editingIndex
                         ] =
                             existingTransaction.copy(
-
                                 description =
                                     descriptionText.trim(),
 
@@ -3710,28 +2886,19 @@ fun ReceiptsScreen(
                                     signedAmount,
 
                                 date =
-                                    if (
-                                        existingTransaction
-                                            .date
-                                            .isBlank()
-                                    ) {
-
-                                        LocalDate
-                                            .now()
-                                            .toString()
-
+                                    if (existingTransaction.date.isBlank()) {
+                                        LocalDate.now().toString()
                                     } else {
-
                                         existingTransaction.date
                                     }
                             )
 
                     } else {
 
+                        /* ADD NEW */
+
                         updatedTransactions.add(
-
                             AccountTransaction(
-
                                 description =
                                     descriptionText.trim(),
 
@@ -3739,9 +2906,7 @@ fun ReceiptsScreen(
                                     signedAmount,
 
                                 date =
-                                    LocalDate
-                                        .now()
-                                        .toString(),
+                                    LocalDate.now().toString(),
 
                                 source =
                                     "MANUAL"
@@ -3965,7 +3130,7 @@ fun ReceiptsScreen(
 
 
                             amountText =
-                                abs(
+                                kotlin.math.abs(
                                     transaction.amount
                                 ).toString()
 
@@ -4066,7 +3231,6 @@ fun ReceiptsScreen(
     ) {
 
         AlertDialog(
-
             onDismissRequest = {
                 showResetDialog = false
             },
@@ -4160,793 +3324,369 @@ data class BankSyncPreview(
 )
 
 
+private fun getBankSyncPreviewStatus(
+    transactions: List<AccountTransaction>,
+    bankTransaction: BankTransaction
+): BankSyncPreview {
+    val bankId = bankTransaction.id
+    val upstreamId = bankTransaction.upstreamTransactionId
+
+    if (bankId.isNotBlank()) {
+        val idIndex = transactions.indexOfFirst {
+            it.bankTransactionId == bankId
+        }
+        if (idIndex >= 0) {
+            return BankSyncPreview(
+                transaction = bankTransaction,
+                status = "ALREADY IMPORTED",
+                statusDetail = "This Endute transaction ID is already in HomeHub. No new entry will be created.",
+                existingIndex = idIndex
+            )
+        }
+    }
+
+    if (upstreamId.isNotBlank()) {
+        val upstreamIndex = transactions.indexOfFirst {
+            it.upstreamBankTransactionId == upstreamId
+        }
+        if (upstreamIndex >= 0) {
+            return BankSyncPreview(
+                transaction = bankTransaction,
+                status = "ALREADY IMPORTED",
+                statusDetail = "This Virgin Money transaction ID is already in HomeHub. No new entry will be created.",
+                existingIndex = upstreamIndex
+            )
+        }
+    }
+
+    val matchIndex = findMatchingTransactionIndex(
+        transactions,
+        bankTransaction
+    )
+
+    if (matchIndex != null) {
+        return BankSyncPreview(
+            transaction = bankTransaction,
+            status = "WILL LINK",
+            statusDetail = "A unique existing entry matches the amount and merchant/description. It will be linked and its HomeHub date will be changed to the bank transaction date.",
+            existingIndex = matchIndex
+        )
+    }
+
+    return BankSyncPreview(
+        transaction = bankTransaction,
+        status = "NEW",
+        statusDetail = "No sufficiently strong unique existing match was found. A new transaction will be added if you select it."
+    )
+}
+
 fun buildBankSyncPreview(
     transactions: List<AccountTransaction>,
     bankTransactions: List<BankTransaction>
 ): List<BankSyncPreview> {
-
-    val reservedIndices =
-        mutableSetOf<Int>()
-
-
-    return bankTransactions.map { bankTransaction ->
-
-        /* ------------------------------------------ */
-        /* FIRST: ENDUTE ID                           */
-        /* ------------------------------------------ */
-
-        val idIndex =
-            transactions
-                .mapIndexedNotNull { index, transaction ->
-
-                    if (
-                        reservedIndices.contains(
-                            index
-                        )
-                    ) {
-
-                        return@mapIndexedNotNull null
-                    }
-
-
-                    if (
-                        bankTransaction.id.isNotBlank() &&
-                        transaction.bankTransactionId ==
-                        bankTransaction.id
-                    ) {
-
-                        index
-
-                    } else {
-
-                        null
-                    }
-                }
-                .firstOrNull()
-
-
-        if (
-            idIndex != null
-        ) {
-
-            return@map BankSyncPreview(
-
-                transaction =
-                    bankTransaction,
-
-                status =
-                    "ALREADY IMPORTED",
-
-                statusDetail =
-                    "This Endute transaction ID is already linked to this HomeHub entry.",
-
-                existingIndex =
-                    idIndex
-            )
-        }
-
-
-        /* ------------------------------------------ */
-        /* SECOND: VIRGIN MONEY UPSTREAM ID           */
-        /* ------------------------------------------ */
-
-        val upstreamIndex =
-            transactions
-                .mapIndexedNotNull { index, transaction ->
-
-                    if (
-                        reservedIndices.contains(
-                            index
-                        )
-                    ) {
-
-                        return@mapIndexedNotNull null
-                    }
-
-
-                    if (
-                        bankTransaction
-                            .upstreamTransactionId
-                            .isNotBlank() &&
-
-                        transaction
-                            .upstreamBankTransactionId ==
-                        bankTransaction
-                            .upstreamTransactionId
-                    ) {
-
-                        index
-
-                    } else {
-
-                        null
-                    }
-                }
-                .firstOrNull()
-
-
-        if (
-            upstreamIndex != null
-        ) {
-
-            return@map BankSyncPreview(
-
-                transaction =
-                    bankTransaction,
-
-                status =
-                    "ALREADY IMPORTED",
-
-                statusDetail =
-                    "This Virgin Money transaction ID is already linked to this HomeHub entry.",
-
-                existingIndex =
-                    upstreamIndex
-            )
-        }
-
-
-        /* ------------------------------------------ */
-        /* FIND SAFE MANUAL MATCH                     */
-        /* ------------------------------------------ */
-
-        val eligibleIndices =
-            transactions
-                .mapIndexedNotNull { index, transaction ->
-
-                    if (
-                        reservedIndices.contains(
-                            index
-                        )
-                    ) {
-
-                        return@mapIndexedNotNull null
-                    }
-
-
-                    if (
-                        transaction.bankTransactionId.isNotBlank() ||
-                        transaction.upstreamBankTransactionId.isNotBlank()
-                    ) {
-
-                        return@mapIndexedNotNull null
-                    }
-
-
-                    if (
-                        abs(
-                            transaction.amount -
-                                    bankTransaction.amount
-                        ) >= 0.005
-                    ) {
-
-                        return@mapIndexedNotNull null
-                    }
-
-
-                    index
-                }
-
-
-        val scored =
-            eligibleIndices
-                .map { index ->
-
-                    Pair(
-                        index,
-
-                        transactionMatchScore(
-                            transactions[index],
-                            bankTransaction
-                        )
-                    )
-                }
-                .filter {
-                    it.second > 0
-                }
-                .sortedByDescending {
-                    it.second
-                }
-
-
-        val matchIndex: Int?
-        val detail: String
-
-
-        if (
-            scored.isNotEmpty() &&
-            scored.first().second >= 60
-        ) {
-
-            val highestScore =
-                scored.first().second
-
-
-            val highestMatches =
-                scored.count {
-                    it.second == highestScore
-                }
-
-
-            if (
-                highestMatches == 1
-            ) {
-
-                matchIndex =
-                    scored.first().first
-
-
-                detail =
-                    "A unique existing entry matches the amount and merchant/description. It will be linked and its HomeHub date will be changed to the bank transaction date."
-
-            } else {
-
-                matchIndex =
-                    null
-
-
-                detail =
-                    "More than one existing entry matches this transaction equally well. HomeHub will not guess which one to link."
+    // First mark transactions that are already linked by a stable bank ID.
+    val previews = bankTransactions.map { bankTransaction ->
+        val bankId = bankTransaction.id
+        val upstreamId = bankTransaction.upstreamTransactionId
+
+        if (bankId.isNotBlank()) {
+            val idIndex = transactions.indexOfFirst {
+                it.bankTransactionId == bankId
             }
-
-        } else {
-
-            matchIndex =
-                null
-
-
-            detail =
-                if (
-                    eligibleIndices.isEmpty()
-                ) {
-
-                    "No unlinked HomeHub entry matches this transaction."
-
-                } else {
-
-                    "No sufficiently strong unique match was found. This will be treated as a new transaction unless you deselect it."
-                }
+            if (idIndex >= 0) {
+                return@map BankSyncPreview(
+                    transaction = bankTransaction,
+                    status = "ALREADY IMPORTED",
+                    statusDetail = "This Endute transaction ID is already in HomeHub. No new entry will be created.",
+                    existingIndex = idIndex
+                )
+            }
         }
 
+        if (upstreamId.isNotBlank()) {
+            val upstreamIndex = transactions.indexOfFirst {
+                it.upstreamBankTransactionId == upstreamId
+            }
+            if (upstreamIndex >= 0) {
+                return@map BankSyncPreview(
+                    transaction = bankTransaction,
+                    status = "ALREADY IMPORTED",
+                    statusDetail = "This Virgin Money transaction ID is already in HomeHub. No new entry will be created.",
+                    existingIndex = upstreamIndex
+                )
+            }
+        }
 
-        if (
-            matchIndex != null
-        ) {
+        BankSyncPreview(
+            transaction = bankTransaction,
+            status = "NEW",
+            statusDetail = "No sufficiently strong unique existing match was found. A new transaction will be added if you select it."
+        )
+    }.toMutableList()
 
-            reservedIndices.add(
-                matchIndex
+    // Build every possible match first. This is deliberately NOT greedy.
+    // A bank transaction near the start of the feed must not steal a manual
+    // entry from a later transaction that is a much better match.
+    data class Match(
+        val bankIndex: Int,
+        val manualIndex: Int,
+        val score: Int
+    )
+
+    val matches = mutableListOf<Match>()
+
+    bankTransactions.forEachIndexed { bankIndex, bankTransaction ->
+        if (previews[bankIndex].status == "ALREADY IMPORTED") return@forEachIndexed
+
+        transactions.forEachIndexed { manualIndex, manualTransaction ->
+            val score = transactionMatchScore(
+                manualTransaction,
+                bankTransaction
             )
 
-
-            BankSyncPreview(
-
-                transaction =
-                    bankTransaction,
-
-                status =
-                    "WILL LINK",
-
-                statusDetail =
-                    detail,
-
-                existingIndex =
-                    matchIndex
-            )
-
-        } else {
-
-            BankSyncPreview(
-
-                transaction =
-                    bankTransaction,
-
-                status =
-                    "NEW",
-
-                statusDetail =
-                    "No unique existing entry can be safely linked. A new bank transaction will be added if you select it for import.",
-
-                existingIndex =
-                    null
-            )
+            if (score >= 75) {
+                matches.add(
+                    Match(
+                        bankIndex = bankIndex,
+                        manualIndex = manualIndex,
+                        score = score
+                    )
+                )
+            }
         }
     }
+
+    val unmatchedBanks =
+        bankTransactions.indices
+            .filter { previews[it].status != "ALREADY IMPORTED" }
+            .toMutableSet()
+
+    val unmatchedManuals = transactions.indices.toMutableSet()
+
+    // Resolve the strongest matches globally. At each step, only accept a
+    // match if it is the unique strongest candidate for BOTH sides. This
+    // prevents a weak/generic match from consuming an entry needed by an
+    // exact merchant/word match.
+    while (true) {
+        val available = matches.filter {
+            it.bankIndex in unmatchedBanks &&
+                    it.manualIndex in unmatchedManuals
+        }
+
+        if (available.isEmpty()) break
+
+        val highestScore = available.maxOf { it.score }
+        val highest = available.filter { it.score == highestScore }
+
+        val bankCounts = highest.groupingBy { it.bankIndex }.eachCount()
+        val manualCounts = highest.groupingBy { it.manualIndex }.eachCount()
+
+        val resolvable = highest.filter {
+            bankCounts[it.bankIndex] == 1 &&
+                    manualCounts[it.manualIndex] == 1
+        }
+
+        if (resolvable.isEmpty()) {
+            // Do not guess where the strongest remaining matches are tied.
+            // Remove those tied edges and continue looking for weaker,
+            // unambiguous matches between the remaining rows.
+            val tiedBanks = highest.map { it.bankIndex }.toSet()
+            val tiedManuals = highest.map { it.manualIndex }.toSet()
+
+            matches.removeAll {
+                it.score == highestScore &&
+                        (it.bankIndex in tiedBanks || it.manualIndex in tiedManuals)
+            }
+            continue
+        }
+
+        for (match in resolvable) {
+            if (match.bankIndex !in unmatchedBanks ||
+                match.manualIndex !in unmatchedManuals
+            ) {
+                continue
+            }
+
+            previews[match.bankIndex] = BankSyncPreview(
+                transaction = bankTransactions[match.bankIndex],
+                status = "WILL LINK",
+                statusDetail = "A unique existing entry matches the amount and merchant/description. It will be linked and its HomeHub date will be changed to the bank transaction date.",
+                existingIndex = match.manualIndex
+            )
+
+            unmatchedBanks.remove(match.bankIndex)
+            unmatchedManuals.remove(match.manualIndex)
+        }
+    }
+
+    return previews
 }
 
-
-/* -------------------------------------------------- */
-/* BANK SYNC SCREEN                                   */
-/* -------------------------------------------------- */
 
 @Composable
 fun BankSyncScreen(
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
-    val context =
-        LocalContext.current
-
-
-    val keyboardController =
-        LocalSoftwareKeyboardController.current
-
-
-    var bankTransactions by remember {
-        mutableStateOf<List<BankTransaction>>(
-            emptyList()
-        )
-    }
-
-
-    var previewItems by remember {
-        mutableStateOf<List<BankSyncPreview>>(
-            emptyList()
-        )
-    }
-
-
-    var selectedBankIds by remember {
-        mutableStateOf<Set<String>>(
-            emptySet()
-        )
-    }
-
-
-    var syncMessage by remember {
-        mutableStateOf<String?>(null)
-    }
-
-
-    var transactionCount by remember {
-        mutableStateOf("")
-    }
-
-
-    var apiKeyInput by remember {
-        mutableStateOf("")
-    }
-
-
-    var apiKeySaved by remember {
-        mutableStateOf(
-            hasStoredEnduteApiKey(
-                context
-            )
-        )
-    }
-
-
-    var showApiKeyEntry by remember {
-        mutableStateOf(
-            !apiKeySaved
-        )
-    }
-
+    var bankTransactions by remember { mutableStateOf<List<BankTransaction>>(emptyList()) }
+    var previewItems by remember { mutableStateOf<List<BankSyncPreview>>(emptyList()) }
+    var selectedBankIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var syncMessage by remember { mutableStateOf<String?>(null) }
+    var transactionCount by remember { mutableStateOf("") }
+    var apiKeyInput by remember { mutableStateOf("") }
+    var apiKeySaved by remember { mutableStateOf(hasStoredEnduteApiKey(context)) }
+    var showApiKeyEntry by remember { mutableStateOf(!apiKeySaved) }
 
     LazyColumn(
-
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(20.dp),
-
-        verticalArrangement =
-            Arrangement.spacedBy(8.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-
-        /* ------------------------------------------ */
-        /* BACK                                     */
-        /* ------------------------------------------ */
+        item { ScreenBackButton(onBack = onBack) }
 
         item {
-
-            ScreenBackButton(
-                onBack =
-                    onBack
-            )
-        }
-
-
-        /* ------------------------------------------ */
-        /* TITLE                                    */
-        /* ------------------------------------------ */
-
-        item {
-
             Row(
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                horizontalArrangement =
-                    Arrangement.Center
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
             ) {
-
                 Text(
-                    text =
-                        "Virgin Money Sync",
-
-                    style =
-                        MaterialTheme
-                            .typography
-                            .headlineMedium
+                    text = "Virgin Money Sync",
+                    style = MaterialTheme.typography.headlineMedium
                 )
             }
         }
 
-
-        /* ------------------------------------------ */
-        /* CONNECTION INFO                           */
-        /* ------------------------------------------ */
-
         item {
-
             Card(
-
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                shape =
-                    RoundedCornerShape(14.dp),
-
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor =
-                            Color.White,
-
-                        contentColor =
-                            HOMEHUB_TEXT
-                    )
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = HOMEHUB_TEXT
+                )
             ) {
-
-                Column(
-                    modifier =
-                        Modifier.padding(14.dp)
-                ) {
-
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        text =
-                            "Endute connection",
-
-                        style =
-                            MaterialTheme
-                                .typography
-                                .titleMedium
+                        text = "Endute connection",
+                        style = MaterialTheme.typography.titleMedium
                     )
-
-
-                    Spacer(
-                        modifier =
-                            Modifier.height(4.dp)
-                    )
-
-
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text =
-                            "HomeHub connects directly to Endute from this phone. Fetching does not change any HomeHub data. Review and select the transactions you want to import or link.",
-
-                        style =
-                            MaterialTheme
-                                .typography
-                                .bodyMedium
+                        text = "HomeHub connects directly to Endute from this phone. Fetching does not change any HomeHub data. Review the action shown for each transaction before importing.",
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
         }
 
-
-        /* ------------------------------------------ */
-        /* API KEY                                   */
-        /* ------------------------------------------ */
-
         item {
-
             Card(
-
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                shape =
-                    RoundedCornerShape(14.dp),
-
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor =
-                            Color.White,
-
-                        contentColor =
-                            HOMEHUB_TEXT
-                    )
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = HOMEHUB_TEXT
+                )
             ) {
-
-                Column(
-                    modifier =
-                        Modifier.padding(14.dp)
-                ) {
-
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        text =
-                            "ENDUTE API KEY",
-
-                        style =
-                            MaterialTheme
-                                .typography
-                                .titleMedium
+                        text = "ENDUTE API KEY",
+                        style = MaterialTheme.typography.titleMedium
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
 
-
-                    Spacer(
-                        modifier =
-                            Modifier.height(4.dp)
-                    )
-
-
-                    if (
-                        apiKeySaved &&
-                        !showApiKeyEntry
-                    ) {
-
+                    if (apiKeySaved && !showApiKeyEntry) {
                         Text(
-                            text =
-                                "API key is saved securely on this device.",
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodyMedium
+                            text = "API key is saved securely on this device.",
+                            style = MaterialTheme.typography.bodyMedium
                         )
-
-
-                        Spacer(
-                            modifier =
-                                Modifier.height(8.dp)
-                        )
-
-
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
-                            modifier =
-                                Modifier.fillMaxWidth(),
-
-                            horizontalArrangement =
-                                Arrangement.spacedBy(
-                                    8.dp
-                                )
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            Button(
+                                onClick = {
+                                    apiKeyInput = ""
+                                    showApiKeyEntry = true
+                                },
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = HOMEHUB_SECONDARY,
+                                    contentColor = HOMEHUB_PRIMARY
+                                )
+                            ) { Text("REPLACE API KEY") }
 
                             Button(
-
                                 onClick = {
-
-                                    apiKeyInput =
-                                        ""
-
-                                    showApiKeyEntry =
-                                        true
+                                    clearEnduteApiKey(context)
+                                    apiKeySaved = false
+                                    apiKeyInput = ""
+                                    showApiKeyEntry = true
+                                    syncMessage = "Endute API key cleared."
                                 },
-
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .height(48.dp),
-
-                                colors =
-                                    ButtonDefaults.buttonColors(
-                                        containerColor =
-                                            HOMEHUB_SECONDARY,
-
-                                        contentColor =
-                                            HOMEHUB_PRIMARY
-                                    )
-                            ) {
-
-                                Text(
-                                    "REPLACE API KEY"
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = HOMEHUB_SECONDARY,
+                                    contentColor = HOMEHUB_PRIMARY
                                 )
-                            }
-
-
-                            Button(
-
-                                onClick = {
-
-                                    clearEnduteApiKey(
-                                        context
-                                    )
-
-                                    apiKeySaved =
-                                        false
-
-                                    apiKeyInput =
-                                        ""
-
-                                    showApiKeyEntry =
-                                        true
-
-                                    syncMessage =
-                                        "Endute API key cleared."
-                                },
-
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .height(48.dp),
-
-                                colors =
-                                    ButtonDefaults.buttonColors(
-                                        containerColor =
-                                            HOMEHUB_SECONDARY,
-
-                                        contentColor =
-                                            HOMEHUB_PRIMARY
-                                    )
-                            ) {
-
-                                Text(
-                                    "CLEAR API KEY"
-                                )
-                            }
+                            ) { Text("CLEAR API KEY") }
                         }
-
                     } else {
-
                         OutlinedTextField(
-
-                            value =
-                                apiKeyInput,
-
-                            onValueChange = {
-                                apiKeyInput =
-                                    it
-                            },
-
-                            modifier =
-                                Modifier.fillMaxWidth(),
-
-                            placeholder = {
-                                Text(
-                                    "Enter Endute API key"
-                                )
-                            },
-
-                            singleLine =
-                                true,
-
-                            visualTransformation =
-                                PasswordVisualTransformation(),
-
-                            colors =
-                                OutlinedTextFieldDefaults.colors(
-
-                                    focusedContainerColor =
-                                        Color.White,
-
-                                    unfocusedContainerColor =
-                                        Color.White,
-
-                                    focusedBorderColor =
-                                        HOMEHUB_TEXT,
-
-                                    unfocusedBorderColor =
-                                        HOMEHUB_TEXT,
-
-                                    focusedTextColor =
-                                        HOMEHUB_TEXT,
-
-                                    unfocusedTextColor =
-                                        HOMEHUB_TEXT,
-
-                                    cursorColor =
-                                        HOMEHUB_TEXT
-                                )
+                            value = apiKeyInput,
+                            onValueChange = { apiKeyInput = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Enter Endute API key") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = Color.White,
+                                focusedBorderColor = HOMEHUB_TEXT,
+                                unfocusedBorderColor = HOMEHUB_TEXT,
+                                focusedTextColor = HOMEHUB_TEXT,
+                                unfocusedTextColor = HOMEHUB_TEXT,
+                                cursorColor = HOMEHUB_TEXT
+                            )
                         )
-
-
-                        Spacer(
-                            modifier =
-                                Modifier.height(6.dp)
-                        )
-
-
+                        Spacer(modifier = Modifier.height(6.dp))
                         Row(
-
-                            modifier =
-                                Modifier.fillMaxWidth(),
-
-                            horizontalArrangement =
-                                Arrangement.spacedBy(
-                                    8.dp
-                                )
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-
                             Button(
-
                                 onClick = {
-
-                                    val enteredKey =
-                                        apiKeyInput
-                                            .trim()
-
-
-                                    if (
-                                        !enteredKey
-                                            .startsWith(
-                                                "edk_"
-                                            )
-                                    ) {
-
-                                        syncMessage =
-                                            "Enter a valid Endute API key."
-
+                                    val enteredKey = apiKeyInput.trim()
+                                    if (!enteredKey.startsWith("edk_")) {
+                                        syncMessage = "Enter a valid Endute API key."
                                         return@Button
                                     }
-
-
                                     try {
-
-                                        saveEnduteApiKey(
-                                            context,
-                                            enteredKey
-                                        )
-
-
-                                        apiKeyInput =
-                                            ""
-
-                                        apiKeySaved =
-                                            true
-
-                                        showApiKeyEntry =
-                                            false
-
-                                        syncMessage =
-                                            "Endute API key saved securely on this device."
-
-                                    } catch (
-                                        e: Exception
-                                    ) {
-
-                                        syncMessage =
-                                            "Couldn't save the Endute API key: ${e.message ?: "Unknown error"}"
+                                        saveEnduteApiKey(context, enteredKey)
+                                        apiKeyInput = ""
+                                        apiKeySaved = true
+                                        showApiKeyEntry = false
+                                        syncMessage = "Endute API key saved securely on this device."
+                                    } catch (e: Exception) {
+                                        syncMessage = "Couldn't save the Endute API key: ${e.message ?: "Unknown error"}"
                                     }
                                 },
+                                modifier = Modifier.weight(1f).height(48.dp)
+                            ) { Text("SAVE API KEY") }
 
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .height(48.dp)
-                            ) {
-
-                                Text(
-                                    "SAVE API KEY"
-                                )
-                            }
-
-
-                            if (
-                                apiKeySaved
-                            ) {
-
+                            if (apiKeySaved) {
                                 TextButton(
-
                                     onClick = {
-
-                                        apiKeyInput =
-                                            ""
-
-                                        showApiKeyEntry =
-                                            false
+                                        apiKeyInput = ""
+                                        showApiKeyEntry = false
                                     },
-
-                                    modifier =
-                                        Modifier.height(
-                                            48.dp
-                                        )
-                                ) {
-
-                                    Text(
-                                        "CANCEL"
-                                    )
-                                }
+                                    modifier = Modifier.height(48.dp)
+                                ) { Text("CANCEL") }
                             }
                         }
                     }
@@ -4954,987 +3694,335 @@ fun BankSyncScreen(
             }
         }
 
-
-        /* ------------------------------------------ */
-        /* COUNT                                     */
-        /* ------------------------------------------ */
-
         item {
-
             OutlinedTextField(
-
-                value =
-                    transactionCount,
-
+                value = transactionCount,
                 onValueChange = { value ->
-
-                    transactionCount =
-                        value.filter {
-                            it.isDigit()
-                        }
+                    transactionCount = value.filter { it.isDigit() }
                 },
-
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                placeholder = {
-                    Text(
-                        "Number of transactions to review"
-                    )
-                },
-
-                singleLine =
-                    true,
-
-                keyboardOptions =
-                    KeyboardOptions(
-                        keyboardType =
-                            KeyboardType.Number
-                    ),
-
-                colors =
-                    OutlinedTextFieldDefaults.colors(
-
-                        focusedContainerColor =
-                            Color.White,
-
-                        unfocusedContainerColor =
-                            Color.White,
-
-                        focusedBorderColor =
-                            HOMEHUB_TEXT,
-
-                        unfocusedBorderColor =
-                            HOMEHUB_TEXT,
-
-                        focusedTextColor =
-                            HOMEHUB_TEXT,
-
-                        unfocusedTextColor =
-                            HOMEHUB_TEXT,
-
-                        cursorColor =
-                            HOMEHUB_TEXT
-                    )
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Number of transactions to review") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White,
+                    focusedBorderColor = HOMEHUB_TEXT,
+                    unfocusedBorderColor = HOMEHUB_TEXT,
+                    focusedTextColor = HOMEHUB_TEXT,
+                    unfocusedTextColor = HOMEHUB_TEXT,
+                    cursorColor = HOMEHUB_TEXT
+                )
             )
         }
 
-
-        /* ------------------------------------------ */
-        /* FETCH                                     */
-        /* ------------------------------------------ */
-
         item {
-
             Button(
-
                 onClick = {
-
                     keyboardController?.hide()
 
-
-                    val count =
-                        transactionCount
-                            .toIntOrNull()
-                            ?.coerceAtLeast(
-                                1
-                            )
-
-
-                    if (
-                        count == null
-                    ) {
-
-                        syncMessage =
-                            "Enter a valid number of transactions to review."
-
+                    val count = transactionCount.toIntOrNull()?.coerceAtLeast(1)
+                    if (count == null) {
+                        syncMessage = "Enter a valid number of transactions to review."
+                        return@Button
+                    }
+                    if (!apiKeySaved) {
+                        syncMessage = "Save your Endute API key first."
                         return@Button
                     }
 
+                    syncMessage = "Connecting to Endute..."
 
-                    if (
-                        !apiKeySaved
-                    ) {
+                    Executors.newSingleThreadExecutor().execute {
+                        try {
+                            val fetched = fetchEnduteTransactions(context, count)
+                            val existing = loadTransactions(context)
+                            val preview = buildBankSyncPreview(existing, fetched)
+                            val initiallySelected = preview
+                                .filter { it.status != "ALREADY IMPORTED" }
+                                .map { it.transaction.id }
+                                .filter { it.isNotBlank() }
+                                .toSet()
 
-                        syncMessage =
-                            "Save your Endute API key first."
-
-                        return@Button
-                    }
-
-
-                    syncMessage =
-                        "Connecting to Endute..."
-
-
-                    Executors
-                        .newSingleThreadExecutor()
-                        .execute {
-
-                            try {
-
-                                val fetched =
-                                    fetchEnduteTransactions(
-                                        context,
-                                        count
-                                    )
-
-
-                                val existing =
-                                    loadTransactions(
-                                        context
-                                    )
-
-
-                                val preview =
-                                    buildBankSyncPreview(
-                                        existing,
-                                        fetched
-                                    )
-
-
-                                val defaultSelection =
-                                    preview
-                                        .filter {
-                                            it.status !=
-                                                    "ALREADY IMPORTED"
-                                        }
-                                        .map {
-                                            it.transaction.id
-                                        }
-                                        .toSet()
-
-
-                                context
-                                    .mainExecutor
-                                    .execute {
-
-                                        bankTransactions =
-                                            fetched
-
-                                        previewItems =
-                                            preview
-
-                                        selectedBankIds =
-                                            defaultSelection
-
-                                        syncMessage =
-                                            "Fetched ${fetched.size} transaction(s) from Endute. Review the selections below before importing."
-                                    }
-
-                            } catch (
-                                e: Exception
-                            ) {
-
-                                context
-                                    .mainExecutor
-                                    .execute {
-
-                                        bankTransactions =
-                                            emptyList()
-
-                                        previewItems =
-                                            emptyList()
-
-                                        selectedBankIds =
-                                            emptySet()
-
-                                        syncMessage =
-                                            e.message
-                                                ?: "Endute error: Unknown error"
-                                    }
+                            context.mainExecutor.execute {
+                                bankTransactions = fetched
+                                previewItems = preview
+                                selectedBankIds = initiallySelected
+                                syncMessage = "Fetched ${fetched.size} transaction(s) from Endute. Review the selections below before importing."
+                            }
+                        } catch (e: Exception) {
+                            context.mainExecutor.execute {
+                                bankTransactions = emptyList()
+                                previewItems = emptyList()
+                                selectedBankIds = emptySet()
+                                syncMessage = e.message ?: "Endute error: Unknown error"
                             }
                         }
+                    }
                 },
-
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-            ) {
-
-                Text(
-                    "FETCH TRANSACTIONS"
-                )
-            }
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) { Text("FETCH TRANSACTIONS") }
         }
 
-
-        /* ------------------------------------------ */
-        /* MESSAGE                                    */
-        /* ------------------------------------------ */
-
-        if (
-            syncMessage != null
-        ) {
-
+        if (syncMessage != null) {
             item {
-
                 Card(
-
-                    modifier =
-                        Modifier.fillMaxWidth(),
-
-                    shape =
-                        RoundedCornerShape(12.dp),
-
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor =
-                                Color.White,
-
-                            contentColor =
-                                HOMEHUB_TEXT
-                        )
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White,
+                        contentColor = HOMEHUB_TEXT
+                    )
                 ) {
-
                     Text(
-
-                        text =
-                            syncMessage!!,
-
-                        modifier =
-                            Modifier.padding(
-                                12.dp
-                            ),
-
-                        style =
-                            MaterialTheme
-                                .typography
-                                .bodyMedium
+                        text = syncMessage!!,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
         }
 
-
-        /* ------------------------------------------ */
-        /* PREVIEW                                   */
-        /* ------------------------------------------ */
-
-        if (
-            previewItems.isNotEmpty()
-        ) {
-
-            val alreadyImported =
-                previewItems.count {
-                    it.status ==
-                            "ALREADY IMPORTED"
-                }
-
-
-            val willLink =
-                previewItems.count {
-                    it.status ==
-                            "WILL LINK"
-                }
-
-
-            val newCount =
-                previewItems.count {
-                    it.status ==
-                            "NEW"
-                }
-
-
-            val selectedCount =
-                previewItems.count {
-                    it.transaction.id in
-                            selectedBankIds
-                }
-
+        if (previewItems.isNotEmpty()) {
+            val alreadyImported = previewItems.count { it.status == "ALREADY IMPORTED" }
+            val willLink = previewItems.count { it.status == "WILL LINK" }
+            val newCount = previewItems.count { it.status == "NEW" }
+            val selectedCount = previewItems.count {
+                it.status != "ALREADY IMPORTED" && it.transaction.id in selectedBankIds
+            }
 
             item {
-
                 Card(
-
-                    modifier =
-                        Modifier.fillMaxWidth(),
-
-                    shape =
-                        RoundedCornerShape(12.dp),
-
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor =
-                                Color.White,
-
-                            contentColor =
-                                HOMEHUB_TEXT
-                        )
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White,
+                        contentColor = HOMEHUB_TEXT
+                    )
                 ) {
-
-                    Column(
-                        modifier =
-                            Modifier.padding(
-                                12.dp
-                            )
-                    ) {
-
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("IMPORT PREVIEW", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-
-                            "IMPORT PREVIEW",
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .titleMedium
+                            "$newCount NEW  •  $willLink WILL LINK  •  $alreadyImported ALREADY IMPORTED",
+                            style = MaterialTheme.typography.bodyMedium
                         )
-
-
-                        Spacer(
-                            modifier =
-                                Modifier.height(4.dp)
-                        )
-
-
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-
-                            "$newCount NEW  •  " +
-                                    "$willLink WILL LINK  •  " +
-                                    "$alreadyImported ALREADY IMPORTED",
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodyMedium
-                        )
-
-
-                        Spacer(
-                            modifier =
-                                Modifier.height(6.dp)
-                        )
-
-
-                        Text(
-
                             "$selectedCount selected",
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .titleSmall
+                            style = MaterialTheme.typography.bodyMedium
                         )
-
-
-                        Spacer(
-                            modifier =
-                                Modifier.height(4.dp)
-                        )
-
-
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-
-                            "WILL LINK keeps your manual description and amount, but updates its HomeHub date to the actual bank transaction date.",
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodySmall
+                            "WILL LINK keeps your manual description and amount, attaches the bank IDs and changes the HomeHub date to the bank transaction date. NEW creates a new bank transaction.",
+                            style = MaterialTheme.typography.bodySmall
                         )
-                    }
-                }
-            }
-
-
-            /* -------------------------------------- */
-            /* SELECT ALL / NONE                      */
-            /* -------------------------------------- */
-
-            item {
-
-                Row(
-
-                    modifier =
-                        Modifier.fillMaxWidth(),
-
-                    horizontalArrangement =
-                        Arrangement.spacedBy(
-                            8.dp
-                        )
-                ) {
-
-                    Button(
-
-                        onClick = {
-
-                            selectedBankIds =
-                                previewItems
-                                    .filter {
-                                        it.status !=
-                                                "ALREADY IMPORTED"
-                                    }
-                                    .map {
-                                        it.transaction.id
-                                    }
-                                    .toSet()
-                        },
-
-                        modifier =
-                            Modifier
-                                .weight(1f)
-                                .height(48.dp),
-
-                        colors =
-                            ButtonDefaults.buttonColors(
-                                containerColor =
-                                    HOMEHUB_SECONDARY,
-
-                                contentColor =
-                                    HOMEHUB_PRIMARY
-                            )
-                    ) {
-
-                        Text(
-                            "SELECT ALL"
-                        )
-                    }
-
-
-                    Button(
-
-                        onClick = {
-
-                            selectedBankIds =
-                                emptySet()
-                        },
-
-                        modifier =
-                            Modifier
-                                .weight(1f)
-                                .height(48.dp),
-
-                        colors =
-                            ButtonDefaults.buttonColors(
-                                containerColor =
-                                    HOMEHUB_SECONDARY,
-
-                                contentColor =
-                                    HOMEHUB_PRIMARY
-                            )
-                    ) {
-
-                        Text(
-                            "DESELECT ALL"
-                        )
-                    }
-                }
-            }
-
-
-            /* -------------------------------------- */
-            /* IMPORT SELECTED                        */
-            /* -------------------------------------- */
-
-            item {
-
-                Button(
-
-                    onClick = {
-
-                        if (
-                            selectedBankIds.isEmpty()
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            Button(
+                                onClick = {
+                                    selectedBankIds = previewItems
+                                        .filter { it.status != "ALREADY IMPORTED" }
+                                        .map { it.transaction.id }
+                                        .filter { it.isNotBlank() }
+                                        .toSet()
+                                },
+                                modifier = Modifier.weight(1f).height(46.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = HOMEHUB_SECONDARY,
+                                    contentColor = HOMEHUB_PRIMARY
+                                )
+                            ) { Text("SELECT ALL") }
 
-                            syncMessage =
-                                "Nothing is selected to import."
+                            Button(
+                                onClick = {
+                                    selectedBankIds = emptySet()
+                                },
+                                modifier = Modifier.weight(1f).height(46.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = HOMEHUB_SECONDARY,
+                                    contentColor = HOMEHUB_PRIMARY
+                                )
+                            ) { Text("DESELECT ALL") }
+                        }
+                    }
+                }
+            }
 
+            item {
+                Button(
+                    onClick = {
+                        if (selectedBankIds.isEmpty()) {
+                            syncMessage = "Nothing selected to import."
                             return@Button
                         }
 
-
-                        val existing =
-                            loadTransactions(
-                                context
-                            ).toMutableList()
-
-
-                        var imported =
-                            0
-
-
-                        var matched =
-                            0
-
-
-                        var skipped =
-                            0
-
+                        val existing = loadTransactions(context).toMutableList()
+                        var imported = 0
+                        var matched = 0
+                        var skipped = 0
 
                         previewItems.forEach { preview ->
+                            val bankTransaction = preview.transaction
 
-                            val bankTransaction =
-                                preview.transaction
-
-
-                            if (
-                                bankTransaction.id
-                                !in selectedBankIds
+                            if (bankTransaction.id.isBlank() ||
+                                bankTransaction.id !in selectedBankIds
                             ) {
-
                                 return@forEach
                             }
 
-
-                            when (
-                                preview.status
-                            ) {
-
-                                "ALREADY IMPORTED" -> {
-
-                                    skipped++
-                                }
-
+                            when (preview.status) {
+                                "ALREADY IMPORTED" -> skipped++
 
                                 "WILL LINK" -> {
-
-                                    val matchIndex =
-                                        preview.existingIndex
-
-
-                                    if (
-                                        matchIndex != null &&
-                                        matchIndex in
-                                        existing.indices
-                                    ) {
-
-                                        val existingTransaction =
-                                            existing[
-                                                matchIndex
-                                            ]
-
-
-                                        existing[
-                                            matchIndex
-                                        ] =
-                                            existingTransaction.copy(
-
-                                                /* Keep manual description */
-
-                                                description =
-                                                    existingTransaction
-                                                        .description,
-
-                                                /* Keep manual amount */
-
-                                                amount =
-                                                    existingTransaction
-                                                        .amount,
-
-                                                /* BACKDATE TO BANK DATE */
-
-                                                date =
-                                                    bankTransaction
-                                                        .date
-                                                        .ifBlank {
-                                                            existingTransaction
-                                                                .date
-                                                        },
-
-                                                source =
-                                                    if (
-                                                        existingTransaction
-                                                            .source ==
-                                                        "MANUAL"
-                                                    ) {
-
-                                                        "MATCHED"
-
-                                                    } else {
-
-                                                        existingTransaction
-                                                            .source
-                                                    },
-
-                                                bankTransactionId =
-                                                    bankTransaction.id,
-
-                                                upstreamBankTransactionId =
-                                                    bankTransaction
-                                                        .upstreamTransactionId
-                                            )
-
-
+                                    val matchIndex = preview.existingIndex
+                                    if (matchIndex != null && matchIndex in existing.indices) {
+                                        val existingTransaction = existing[matchIndex]
+                                        existing[matchIndex] = existingTransaction.copy(
+                                            date = bankTransaction.date.ifBlank {
+                                                existingTransaction.date
+                                            },
+                                            source = if (existingTransaction.source == "MANUAL") {
+                                                "MATCHED"
+                                            } else {
+                                                existingTransaction.source
+                                            },
+                                            bankTransactionId = bankTransaction.id,
+                                            upstreamBankTransactionId = bankTransaction.upstreamTransactionId
+                                        )
                                         matched++
-
                                     } else {
-
                                         existing.add(
-
                                             AccountTransaction(
-
-                                                description =
-                                                    bankTransaction
-                                                        .description,
-
-                                                amount =
-                                                    bankTransaction
-                                                        .amount,
-
-                                                date =
-                                                    bankTransaction
-                                                        .date,
-
-                                                source =
-                                                    "BANK",
-
-                                                bankTransactionId =
-                                                    bankTransaction
-                                                        .id,
-
-                                                upstreamBankTransactionId =
-                                                    bankTransaction
-                                                        .upstreamTransactionId
+                                                description = bankTransaction.description,
+                                                amount = bankTransaction.amount,
+                                                date = bankTransaction.date,
+                                                source = "BANK",
+                                                bankTransactionId = bankTransaction.id,
+                                                upstreamBankTransactionId = bankTransaction.upstreamTransactionId
                                             )
                                         )
-
-
                                         imported++
                                     }
                                 }
 
-
                                 "NEW" -> {
-
                                     existing.add(
-
                                         AccountTransaction(
-
-                                            description =
-                                                bankTransaction
-                                                    .description,
-
-                                            amount =
-                                                bankTransaction
-                                                    .amount,
-
-                                            date =
-                                                bankTransaction
-                                                    .date,
-
-                                            source =
-                                                "BANK",
-
-                                            bankTransactionId =
-                                                bankTransaction.id,
-
-                                            upstreamBankTransactionId =
-                                                bankTransaction
-                                                    .upstreamTransactionId
+                                            description = bankTransaction.description,
+                                            amount = bankTransaction.amount,
+                                            date = bankTransaction.date,
+                                            source = "BANK",
+                                            bankTransactionId = bankTransaction.id,
+                                            upstreamBankTransactionId = bankTransaction.upstreamTransactionId
                                         )
                                     )
-
-
                                     imported++
                                 }
                             }
                         }
 
-
-                        saveTransactions(
-                            context,
-                            existing
-                        )
-
-
-                        val refreshedPreview =
-                            buildBankSyncPreview(
-                                existing,
-                                bankTransactions
-                            )
-
-
-                        previewItems =
-                            refreshedPreview
-
-
-                        selectedBankIds =
-                            refreshedPreview
-                                .filter {
-                                    it.status !=
-                                            "ALREADY IMPORTED"
-                                }
-                                .map {
-                                    it.transaction.id
-                                }
-                                .toSet()
-
-
-                        syncMessage =
-                            "Import complete: $imported new, $matched linked/backdated, $skipped already imported and skipped."
+                        saveTransactions(context, existing)
+                        syncMessage = "Import complete: $imported new, $matched linked, $skipped already imported. Unselected transactions were left untouched."
+                        previewItems = buildBankSyncPreview(existing, bankTransactions)
+                        selectedBankIds = previewItems
+                            .filter { it.status != "ALREADY IMPORTED" }
+                            .map { it.transaction.id }
+                            .filter { it.isNotBlank() }
+                            .toSet()
                     },
-
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(50.dp),
-
-                    colors =
-                        ButtonDefaults.buttonColors(
-                            containerColor =
-                                HOMEHUB_SECONDARY,
-
-                            contentColor =
-                                HOMEHUB_PRIMARY
-                        )
-                ) {
-
-                    Text(
-                        "IMPORT / UPSERT SELECTED"
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HOMEHUB_SECONDARY,
+                        contentColor = HOMEHUB_PRIMARY
                     )
-                }
+                ) { Text("IMPORT / UPSERT SELECTED") }
             }
 
-
-            /* -------------------------------------- */
-            /* TRANSACTION LIST                       */
-            /* -------------------------------------- */
-
             item {
-
                 Text(
-
-                    text =
-                        "What will happen to each transaction",
-
-                    style =
-                        MaterialTheme
-                            .typography
-                            .titleMedium
+                    text = "What will happen to each transaction",
+                    style = MaterialTheme.typography.titleMedium
                 )
             }
 
-
-            items(
-                previewItems
-            ) { preview ->
-
-                val transaction =
-                    preview.transaction
-
-
-                val isSelected =
-                    transaction.id in
-                            selectedBankIds
-
+            items(previewItems) { preview ->
+                val transaction = preview.transaction
+                val isAlreadyImported = preview.status == "ALREADY IMPORTED"
+                val isSelected = transaction.id in selectedBankIds
 
                 Card(
-
-                    modifier =
-                        Modifier.fillMaxWidth(),
-
-                    shape =
-                        RoundedCornerShape(12.dp),
-
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor =
-                                Color.White,
-
-                            contentColor =
-                                HOMEHUB_TEXT
-                        )
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White,
+                        contentColor = HOMEHUB_TEXT
+                    )
                 ) {
-
-                    Column(
-                        modifier =
-                            Modifier.padding(
-                                10.dp
-                            )
-                    ) {
-
-                        /* ------------------------ */
-                        /* SELECT + TRANSACTION     */
-                        /* ------------------------ */
-
+                    Column(modifier = Modifier.padding(10.dp)) {
                         Row(
-
-                            modifier =
-                                Modifier.fillMaxWidth(),
-
-                            verticalAlignment =
-                                Alignment.CenterVertically
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-
                             Checkbox(
-
-                                checked =
-                                    isSelected,
-
+                                checked = isSelected,
+                                enabled = !isAlreadyImported && transaction.id.isNotBlank(),
                                 onCheckedChange = { checked ->
-
-                                    if (
-                                        preview.status ==
-                                        "ALREADY IMPORTED"
-                                    ) {
-
-                                        return@Checkbox
+                                    selectedBankIds = if (checked) {
+                                        selectedBankIds + transaction.id
+                                    } else {
+                                        selectedBankIds - transaction.id
                                     }
-
-
-                                    selectedBankIds =
-                                        if (
-                                            checked
-                                        ) {
-
-                                            selectedBankIds +
-                                                    transaction.id
-
-                                        } else {
-
-                                            selectedBankIds -
-                                                    transaction.id
-                                        }
-                                },
-
-                                enabled =
-                                    preview.status !=
-                                            "ALREADY IMPORTED"
+                                }
                             )
 
-
-                            Column(
-                                modifier =
-                                    Modifier.weight(
-                                        1f
-                                    )
-                            ) {
-
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-
-                                    text =
-                                        transaction
-                                            .description,
-
-                                    style =
-                                        MaterialTheme
-                                            .typography
-                                            .titleSmall
+                                    text = transaction.description.ifBlank { "(No description)" },
+                                    style = MaterialTheme.typography.titleSmall
                                 )
-
-
                                 Text(
-
-                                    text =
-                                        transaction.date,
-
-                                    style =
-                                        MaterialTheme
-                                            .typography
-                                            .bodySmall
+                                    text = transaction.date,
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
 
-
                             Text(
-
-                                text =
-                                    formatSignedMoney(
-                                        transaction.amount
-                                    ),
-
-                                style =
-                                    MaterialTheme
-                                        .typography
-                                        .bodyLarge,
-
-                                color =
-                                    if (
-                                        transaction.amount >= 0
-                                    ) {
-
-                                        HOMEHUB_INCOME
-
-                                    } else {
-
-                                        HOMEHUB_OUTGOING
-                                    }
+                                text = formatSignedMoney(transaction.amount),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (transaction.amount >= 0) HOMEHUB_INCOME else HOMEHUB_OUTGOING
                             )
                         }
 
-
-                        Spacer(
-                            modifier =
-                                Modifier.height(4.dp)
-                        )
-
-
-                        /* ------------------------ */
-                        /* STATUS                   */
-                        /* ------------------------ */
-
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-
-                            text =
-                                preview.status,
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .labelLarge,
-
-                            color =
-                                when (
-                                    preview.status
-                                ) {
-
-                                    "NEW" ->
-                                        HOMEHUB_PRIMARY
-
-                                    "ALREADY IMPORTED",
-                                    "WILL LINK" ->
-                                        HOMEHUB_INCOME
-
-                                    "WILL UPDATE" ->
-                                        HOMEHUB_PRIMARY
-
-                                    else ->
-                                        HOMEHUB_TEXT
-                                }
+                            text = preview.status,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = when (preview.status) {
+                                "NEW" -> HOMEHUB_PRIMARY
+                                "ALREADY IMPORTED", "WILL LINK" -> HOMEHUB_INCOME
+                                else -> HOMEHUB_TEXT
+                            }
                         )
-
-
                         Text(
-
-                            text =
-                                preview.statusDetail,
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodySmall
+                            text = preview.statusDetail,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
             }
-
         } else {
-
             item {
-
                 Column(
-
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                top = 8.dp
-                            ),
-
-                    horizontalAlignment =
-                        Alignment.CenterHorizontally
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-
                     Text(
-
-                        text =
-                            "Nothing fetched yet.",
-
-                        style =
-                            MaterialTheme
-                                .typography
-                                .bodyLarge
+                        text = "Nothing fetched yet.",
+                        style = MaterialTheme.typography.bodyLarge
                     )
                 }
             }
@@ -5961,7 +4049,6 @@ fun AccountTransactionRow(
 
 
     Card(
-
         modifier =
             Modifier.fillMaxWidth(),
 
@@ -5984,7 +4071,6 @@ fun AccountTransactionRow(
     ) {
 
         Column(
-
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -5992,7 +4078,6 @@ fun AccountTransactionRow(
         ) {
 
             Row(
-
                 modifier =
                     Modifier.fillMaxWidth(),
 
@@ -6001,13 +4086,11 @@ fun AccountTransactionRow(
             ) {
 
                 Column(
-
                     modifier =
                         Modifier.weight(1f)
                 ) {
 
                     Text(
-
                         text =
                             transaction.description,
 
@@ -6018,25 +4101,14 @@ fun AccountTransactionRow(
                     )
 
 
-                    if (
-                        transaction.date.isNotBlank()
-                    ) {
-
+                    if (transaction.date.isNotBlank()) {
                         Text(
-
-                            text =
-                                transaction.date,
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodySmall
+                            text = transaction.date,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
 
-
                     Text(
-
                         text =
                             formatSignedMoney(
                                 transaction.amount
@@ -6063,13 +4135,11 @@ fun AccountTransactionRow(
 
 
                 Column(
-
                     horizontalAlignment =
                         Alignment.End
                 ) {
 
                     Text(
-
                         text =
                             "Balance",
 
@@ -6081,7 +4151,6 @@ fun AccountTransactionRow(
 
 
                     Text(
-
                         text =
                             formatMoney(
                                 balanceAfter
@@ -6103,7 +4172,6 @@ fun AccountTransactionRow(
 
 
             Row(
-
                 modifier =
                     Modifier.fillMaxWidth(),
 
@@ -6112,7 +4180,6 @@ fun AccountTransactionRow(
             ) {
 
                 TextButton(
-
                     onClick =
                         onEdit,
 
@@ -6131,10 +4198,8 @@ fun AccountTransactionRow(
 
 
                 TextButton(
-
                     onClick = {
-                        showDeleteConfirmation =
-                            true
+                        showDeleteConfirmation = true
                     },
 
                     colors =
@@ -6161,10 +4226,8 @@ fun AccountTransactionRow(
     ) {
 
         AlertDialog(
-
             onDismissRequest = {
-                showDeleteConfirmation =
-                    false
+                showDeleteConfirmation = false
             },
 
             title = {
@@ -6186,7 +4249,6 @@ fun AccountTransactionRow(
             confirmButton = {
 
                 TextButton(
-
                     onClick = {
 
                         showDeleteConfirmation =
@@ -6212,10 +4274,8 @@ fun AccountTransactionRow(
             dismissButton = {
 
                 TextButton(
-
                     onClick = {
-                        showDeleteConfirmation =
-                            false
+                        showDeleteConfirmation = false
                     }
                 ) {
 
@@ -6251,7 +4311,7 @@ fun formatSignedMoney(
 
         "-" +
                 formatMoney(
-                    abs(
+                    kotlin.math.abs(
                         amount
                     )
                 )
@@ -6443,7 +4503,6 @@ fun NotesScreen(
 
 
     Column(
-
         modifier =
             Modifier
                 .fillMaxSize()
@@ -6470,16 +4529,13 @@ fun NotesScreen(
 
 
         LazyColumn(
-
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .weight(1f),
 
             verticalArrangement =
-                Arrangement.spacedBy(
-                    6.dp
-                ),
+                Arrangement.spacedBy(6.dp),
 
             contentPadding =
                 androidx.compose.foundation.layout.PaddingValues(
@@ -6490,7 +4546,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "AdHoc",
 
@@ -6498,8 +4553,7 @@ fun NotesScreen(
                         adhocText,
 
                     onTextChange = {
-                        adhocText =
-                            it
+                        adhocText = it
 
                         preferences
                             .edit()
@@ -6519,7 +4573,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Mon",
 
@@ -6527,8 +4580,7 @@ fun NotesScreen(
                         mondayText,
 
                     onTextChange = {
-                        mondayText =
-                            it
+                        mondayText = it
 
                         preferences
                             .edit()
@@ -6548,7 +4600,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Tue",
 
@@ -6556,8 +4607,7 @@ fun NotesScreen(
                         tuesdayText,
 
                     onTextChange = {
-                        tuesdayText =
-                            it
+                        tuesdayText = it
 
                         preferences
                             .edit()
@@ -6577,7 +4627,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Wed",
 
@@ -6585,8 +4634,7 @@ fun NotesScreen(
                         wednesdayText,
 
                     onTextChange = {
-                        wednesdayText =
-                            it
+                        wednesdayText = it
 
                         preferences
                             .edit()
@@ -6606,7 +4654,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Thu",
 
@@ -6614,8 +4661,7 @@ fun NotesScreen(
                         thursdayText,
 
                     onTextChange = {
-                        thursdayText =
-                            it
+                        thursdayText = it
 
                         preferences
                             .edit()
@@ -6635,7 +4681,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Fri",
 
@@ -6643,8 +4688,7 @@ fun NotesScreen(
                         fridayText,
 
                     onTextChange = {
-                        fridayText =
-                            it
+                        fridayText = it
 
                         preferences
                             .edit()
@@ -6664,7 +4708,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Sat",
 
@@ -6672,8 +4715,7 @@ fun NotesScreen(
                         saturdayText,
 
                     onTextChange = {
-                        saturdayText =
-                            it
+                        saturdayText = it
 
                         preferences
                             .edit()
@@ -6693,7 +4735,6 @@ fun NotesScreen(
             item {
 
                 NoteEntry(
-
                     label =
                         "Sun",
 
@@ -6701,8 +4742,7 @@ fun NotesScreen(
                         sundayText,
 
                     onTextChange = {
-                        sundayText =
-                            it
+                        sundayText = it
 
                         preferences
                             .edit()
@@ -6727,10 +4767,8 @@ fun NotesScreen(
 
 
         Button(
-
             onClick = {
-                showResetDialog =
-                    true
+                showResetDialog = true
             },
 
             modifier =
@@ -6752,10 +4790,8 @@ fun NotesScreen(
     ) {
 
         AlertDialog(
-
             onDismissRequest = {
-                showResetDialog =
-                    false
+                showResetDialog = false
             },
 
             title = {
@@ -6777,32 +4813,23 @@ fun NotesScreen(
             confirmButton = {
 
                 TextButton(
-
                     onClick = {
 
-                        adhocText =
-                            ""
+                        adhocText = ""
 
-                        mondayText =
-                            ""
+                        mondayText = ""
 
-                        tuesdayText =
-                            ""
+                        tuesdayText = ""
 
-                        wednesdayText =
-                            ""
+                        wednesdayText = ""
 
-                        thursdayText =
-                            ""
+                        thursdayText = ""
 
-                        fridayText =
-                            ""
+                        fridayText = ""
 
-                        saturdayText =
-                            ""
+                        saturdayText = ""
 
-                        sundayText =
-                            ""
+                        sundayText = ""
 
 
                         preferences
@@ -6811,8 +4838,7 @@ fun NotesScreen(
                             .apply()
 
 
-                        showResetDialog =
-                            false
+                        showResetDialog = false
                     }
                 ) {
 
@@ -6826,10 +4852,8 @@ fun NotesScreen(
             dismissButton = {
 
                 TextButton(
-
                     onClick = {
-                        showResetDialog =
-                            false
+                        showResetDialog = false
                     }
                 ) {
 
@@ -6842,7 +4866,6 @@ fun NotesScreen(
         )
     }
 }
-
 
 /* -------------------------------------------------- */
 /* NOTE ENTRY                                         */
@@ -6858,7 +4881,6 @@ fun NoteEntry(
 ) {
 
     Row(
-
         modifier =
             Modifier.fillMaxWidth(),
 
@@ -6867,7 +4889,6 @@ fun NoteEntry(
     ) {
 
         Text(
-
             text =
                 label,
 
@@ -6898,7 +4919,6 @@ fun NoteEntry(
 
 
         OutlinedTextField(
-
             value =
                 text,
 
