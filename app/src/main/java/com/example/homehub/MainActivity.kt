@@ -1792,45 +1792,554 @@ fun normaliseTransactionText(text: String): String {
 }
 
 
+/* -------------------------------------------------- */
+/* BANK MATCHING                                      */
+/* -------------------------------------------------- */
+
 fun findMatchingTransactionIndex(
     transactions: List<AccountTransaction>,
     bankTransaction: BankTransaction
 ): Int? {
 
-    val bankId = bankTransaction.id
+    val bankId =
+        bankTransaction.id
 
-    if (bankId.isNotBlank()) {
-        val idIndex = transactions.indexOfFirst {
-            it.bankTransactionId == bankId
-        }
 
-        if (idIndex >= 0) {
+    /*
+     * BANK ID IS ALWAYS THE STRONGEST MATCH.
+     *
+     * If the bank has already supplied this exact ID,
+     * return that transaction immediately.
+     */
+    if (
+        bankId.isNotBlank()
+    ) {
+
+        val idIndex =
+            transactions.indexOfFirst {
+                it.bankTransactionId == bankId
+            }
+
+
+        if (
+            idIndex >= 0
+        ) {
+
             return idIndex
         }
     }
 
+
     val bankDescription =
-        normaliseTransactionText(bankTransaction.description)
+        normaliseTransactionText(
+            bankTransaction.description
+        )
 
-    val candidates = transactions.mapIndexedNotNull { index, transaction ->
-        val sameAmount =
-            kotlin.math.abs(transaction.amount - bankTransaction.amount) < 0.005
 
-        val sameDescription =
-            normaliseTransactionText(transaction.description) == bankDescription
+    /*
+     * First look for an exact dated match.
+     *
+     * There may be more than one matching transaction,
+     * so this deliberately returns the first one rather
+     * than requiring exactly one candidate.
+     *
+     * Batch imports use buildBankSyncPreview(), which
+     * additionally reserves rows so two bank transactions
+     * cannot claim the same HomeHub row.
+     */
+    val exactIndex =
+        transactions.indexOfFirst { transaction ->
 
-        val sameDate =
-            transaction.date.isNotBlank() &&
-                    transaction.date == bankTransaction.date
+            val sameAmount =
+                kotlin.math.abs(
+                    transaction.amount -
+                            bankTransaction.amount
+                ) < 0.005
 
-        if (sameAmount && sameDescription && (sameDate || transaction.date.isBlank())) {
-            index
+
+            val sameDescription =
+                normaliseTransactionText(
+                    transaction.description
+                ) ==
+                        bankDescription
+
+
+            val sameDate =
+                transaction.date.isNotBlank() &&
+                        transaction.date ==
+                        bankTransaction.date
+
+
+            sameAmount &&
+                    sameDescription &&
+                    sameDate
+        }
+
+
+    if (
+        exactIndex >= 0
+    ) {
+
+        return exactIndex
+    }
+
+
+    /*
+     * Finally look for an old manual record that has
+     * no date and no bank ID.
+     */
+    val legacyIndex =
+        transactions.indexOfFirst { transaction ->
+
+            val sameAmount =
+                kotlin.math.abs(
+                    transaction.amount -
+                            bankTransaction.amount
+                ) < 0.005
+
+
+            val sameDescription =
+                normaliseTransactionText(
+                    transaction.description
+                ) ==
+                        bankDescription
+
+
+            val legacy =
+                transaction.date.isBlank() &&
+                        transaction.bankTransactionId.isBlank()
+
+
+            sameAmount &&
+                    sameDescription &&
+                    legacy
+        }
+
+
+    return if (
+        legacyIndex >= 0
+    ) {
+
+        legacyIndex
+
+    } else {
+
+        null
+    }
+}
+
+
+/* -------------------------------------------------- */
+/* BANK SYNC PREVIEW                                  */
+/* -------------------------------------------------- */
+
+data class BankSyncPreview(
+    val transaction: BankTransaction,
+    val status: String,
+    val statusDetail: String,
+    val existingIndex: Int? = null
+)
+
+
+/*
+ * Builds the entire import plan in one pass.
+ *
+ * reservedIndices prevents two bank transactions in the
+ * same batch from claiming the same HomeHub transaction.
+ *
+ * This is important where two genuine bank transactions
+ * happen to have the same date, description and amount.
+ */
+fun buildBankSyncPreview(
+    transactions: List<AccountTransaction>,
+    bankTransactions: List<BankTransaction>
+): List<BankSyncPreview> {
+
+    val reservedIndices =
+        mutableSetOf<Int>()
+
+
+    return bankTransactions.map { bankTransaction ->
+
+        /*
+         * 1. Exact bank ID match.
+         */
+        val idIndex =
+            if (
+                bankTransaction.id.isNotBlank()
+            ) {
+
+                transactions
+                    .indexOfFirst {
+                        it.bankTransactionId ==
+                                bankTransaction.id
+                    }
+                    .takeIf {
+                        it >= 0
+                    }
+
+            } else {
+
+                null
+            }
+
+
+        if (
+            idIndex != null
+        ) {
+
+            reservedIndices.add(
+                idIndex
+            )
+
+
+            BankSyncPreview(
+                transaction =
+                    bankTransaction,
+
+                status =
+                    "ALREADY IMPORTED",
+
+                statusDetail =
+                    "This bank transaction ID is already in HomeHub. No new entry will be created.",
+
+                existingIndex =
+                    idIndex
+            )
+
         } else {
-            null
+
+            val bankDescription =
+                normaliseTransactionText(
+                    bankTransaction.description
+                )
+
+
+            /*
+             * 2. Exact date + description + amount.
+             *
+             * Only an unreserved HomeHub row may be used.
+             */
+            val exactIndex =
+                transactions
+                    .mapIndexedNotNull { index, transaction ->
+
+                        if (
+                            index in reservedIndices
+                        ) {
+
+                            return@mapIndexedNotNull null
+                        }
+
+
+                        val sameAmount =
+                            kotlin.math.abs(
+                                transaction.amount -
+                                        bankTransaction.amount
+                            ) < 0.005
+
+
+                        val sameDescription =
+                            normaliseTransactionText(
+                                transaction.description
+                            ) ==
+                                    bankDescription
+
+
+                        val sameDate =
+                            transaction.date.isNotBlank() &&
+                                    transaction.date ==
+                                    bankTransaction.date
+
+
+                        if (
+                            sameAmount &&
+                            sameDescription &&
+                            sameDate
+                        ) {
+
+                            index
+
+                        } else {
+
+                            null
+                        }
+                    }
+                    .firstOrNull()
+
+
+            if (
+                exactIndex != null
+            ) {
+
+                reservedIndices.add(
+                    exactIndex
+                )
+
+
+                BankSyncPreview(
+                    transaction =
+                        bankTransaction,
+
+                    status =
+                        "WILL LINK",
+
+                    statusDetail =
+                        "An existing entry has the same date, description and amount. It will be linked to this bank transaction ID.",
+
+                    existingIndex =
+                        exactIndex
+                )
+
+            } else {
+
+                /*
+                 * 3. Legacy manual entry.
+                 *
+                 * Only an unreserved blank-date /
+                 * blank-bank-ID row may be upgraded.
+                 */
+                val legacyIndex =
+                    transactions
+                        .mapIndexedNotNull { index, transaction ->
+
+                            if (
+                                index in reservedIndices
+                            ) {
+
+                                return@mapIndexedNotNull null
+                            }
+
+
+                            val sameAmount =
+                                kotlin.math.abs(
+                                    transaction.amount -
+                                            bankTransaction.amount
+                                ) < 0.005
+
+
+                            val sameDescription =
+                                normaliseTransactionText(
+                                    transaction.description
+                                ) ==
+                                        bankDescription
+
+
+                            val legacy =
+                                transaction.date.isBlank() &&
+                                        transaction.bankTransactionId.isBlank()
+
+
+                            if (
+                                sameAmount &&
+                                sameDescription &&
+                                legacy
+                            ) {
+
+                                index
+
+                            } else {
+
+                                null
+                            }
+                        }
+                        .firstOrNull()
+
+
+                if (
+                    legacyIndex != null
+                ) {
+
+                    reservedIndices.add(
+                        legacyIndex
+                    )
+
+
+                    BankSyncPreview(
+                        transaction =
+                            bankTransaction,
+
+                        status =
+                            "WILL UPDATE",
+
+                        statusDetail =
+                            "An older manual entry matches the description and amount but has no date or bank ID. It will be upgraded with the bank details.",
+
+                        existingIndex =
+                            legacyIndex
+                    )
+
+                } else {
+
+                    /*
+                     * 4. Nothing matched.
+                     *
+                     * This transaction will be appended.
+                     */
+                    BankSyncPreview(
+                        transaction =
+                            bankTransaction,
+
+                        status =
+                            "NEW",
+
+                        statusDetail =
+                            "No existing entry matches. A new transaction will be added.",
+
+                        existingIndex =
+                            null
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+/*
+ * Kept for compatibility with any other code that may
+ * call this function directly.
+ *
+ * Single-transaction callers do not need batch reservation.
+ */
+fun getBankSyncPreviewStatus(
+    transactions: List<AccountTransaction>,
+    bankTransaction: BankTransaction
+): BankSyncPreview {
+
+    val bankId =
+        bankTransaction.id
+
+
+    if (
+        bankId.isNotBlank()
+    ) {
+
+        val idIndex =
+            transactions.indexOfFirst {
+                it.bankTransactionId == bankId
+            }
+
+
+        if (
+            idIndex >= 0
+        ) {
+
+            return BankSyncPreview(
+                transaction =
+                    bankTransaction,
+
+                status =
+                    "ALREADY IMPORTED",
+
+                statusDetail =
+                    "This bank transaction ID is already in HomeHub. No new entry will be created.",
+
+                existingIndex =
+                    idIndex
+            )
         }
     }
 
-    return candidates.singleOrNull()
+
+    val bankDescription =
+        normaliseTransactionText(
+            bankTransaction.description
+        )
+
+
+    val exactIndex =
+        transactions.indexOfFirst {
+
+            kotlin.math.abs(
+                it.amount -
+                        bankTransaction.amount
+            ) < 0.005 &&
+
+                    normaliseTransactionText(
+                        it.description
+                    ) ==
+                    bankDescription &&
+
+                    it.date.isNotBlank() &&
+
+                    it.date ==
+                    bankTransaction.date
+        }
+
+
+    if (
+        exactIndex >= 0
+    ) {
+
+        return BankSyncPreview(
+            transaction =
+                bankTransaction,
+
+            status =
+                "WILL LINK",
+
+            statusDetail =
+                "An existing entry has the same date, description and amount. It will be linked to this bank transaction ID.",
+
+            existingIndex =
+                exactIndex
+        )
+    }
+
+
+    val legacyIndex =
+        transactions.indexOfFirst {
+
+            kotlin.math.abs(
+                it.amount -
+                        bankTransaction.amount
+            ) < 0.005 &&
+
+                    normaliseTransactionText(
+                        it.description
+                    ) ==
+                    bankDescription &&
+
+                    it.date.isBlank() &&
+
+                    it.bankTransactionId.isBlank()
+        }
+
+
+    if (
+        legacyIndex >= 0
+    ) {
+
+        return BankSyncPreview(
+            transaction =
+                bankTransaction,
+
+            status =
+                "WILL UPDATE",
+
+            statusDetail =
+                "An older manual entry matches the description and amount but has no date or bank ID. It will be upgraded with the bank details.",
+
+            existingIndex =
+                legacyIndex
+        )
+    }
+
+
+    return BankSyncPreview(
+        transaction =
+            bankTransaction,
+
+        status =
+            "NEW",
+
+        statusDetail =
+            "No existing entry matches. A new transaction will be added.",
+
+        existingIndex =
+            null
+    )
 }
 
 
@@ -1839,38 +2348,95 @@ fun fakeBankTransactions(
     requestedCount: Int
 ): List<BankTransaction> {
 
-    val result = mutableListOf<BankTransaction>()
+    val result =
+        mutableListOf<BankTransaction>()
 
-    val today = LocalDate.now()
+
+    val today =
+        LocalDate.now()
+
 
     existingTransactions
         .takeLast(10)
         .forEachIndexed { index, transaction ->
+
             result.add(
                 BankTransaction(
-                    id = "demo-match-${index + 1}",
-                    description = transaction.description,
-                    amount = transaction.amount,
-                    date = if (transaction.date.isBlank()) {
-                        today.minusDays((index + 1).toLong()).toString()
-                    } else {
-                        transaction.date
-                    }
+                    id =
+                        "demo-match-${index + 1}",
+
+                    description =
+                        transaction.description,
+
+                    amount =
+                        transaction.amount,
+
+                    date =
+                        if (
+                            transaction.date.isBlank()
+                        ) {
+
+                            today.minusDays(
+                                (index + 1).toLong()
+                            ).toString()
+
+                        } else {
+
+                            transaction.date
+                        }
                 )
             )
         }
 
-    val demoNewTransactions = listOf(
-        BankTransaction("demo-new-1", "DEMO COFFEE SHOP", -3.65, today.toString()),
-        BankTransaction("demo-new-2", "DEMO SUPERMARKET", -42.18, today.minusDays(1).toString()),
-        BankTransaction("demo-new-3", "DEMO PETROL", -55.00, today.minusDays(2).toString()),
-        BankTransaction("demo-new-4", "DEMO SALARY", 2500.00, today.minusDays(3).toString()),
-        BankTransaction("demo-new-5", "DEMO TRANSFER", -125.00, today.minusDays(4).toString())
+
+    val demoNewTransactions =
+        listOf(
+
+            BankTransaction(
+                "demo-new-1",
+                "DEMO COFFEE SHOP",
+                -3.65,
+                today.toString()
+            ),
+
+            BankTransaction(
+                "demo-new-2",
+                "DEMO SUPERMARKET",
+                -42.18,
+                today.minusDays(1).toString()
+            ),
+
+            BankTransaction(
+                "demo-new-3",
+                "DEMO PETROL",
+                -55.00,
+                today.minusDays(2).toString()
+            ),
+
+            BankTransaction(
+                "demo-new-4",
+                "DEMO SALARY",
+                2500.00,
+                today.minusDays(3).toString()
+            ),
+
+            BankTransaction(
+                "demo-new-5",
+                "DEMO TRANSFER",
+                -125.00,
+                today.minusDays(4).toString()
+            )
+        )
+
+
+    result.addAll(
+        demoNewTransactions
     )
 
-    result.addAll(demoNewTransactions)
 
-    return result.take(requestedCount.coerceAtLeast(1))
+    return result.take(
+        requestedCount.coerceAtLeast(1)
+    )
 }
 
 
@@ -3016,387 +3582,692 @@ fun ReceiptsScreen(
 /* BANK SYNC SCREEN                                   */
 /* -------------------------------------------------- */
 
-data class BankSyncPreview(
-    val transaction: BankTransaction,
-    val status: String,
-    val statusDetail: String
-)
-
-fun getBankSyncPreviewStatus(
-    transactions: List<AccountTransaction>,
-    bankTransaction: BankTransaction
-): BankSyncPreview {
-
-    val idMatch = transactions.any {
-        bankTransaction.id.isNotBlank() &&
-                it.bankTransactionId == bankTransaction.id
-    }
-
-    if (idMatch) {
-        return BankSyncPreview(
-            transaction = bankTransaction,
-            status = "ALREADY IMPORTED",
-            statusDetail = "This bank transaction ID is already in HomeHub. No new entry will be created."
-        )
-    }
-
-    val bankDescription = normaliseTransactionText(
-        bankTransaction.description
-    )
-
-    val exactMatch = transactions.any {
-        kotlin.math.abs(it.amount - bankTransaction.amount) < 0.005 &&
-                normaliseTransactionText(it.description) == bankDescription &&
-                it.date.isNotBlank() &&
-                it.date == bankTransaction.date
-    }
-
-    if (exactMatch) {
-        return BankSyncPreview(
-            transaction = bankTransaction,
-            status = "WILL LINK",
-            statusDetail = "An existing entry has the same date, description and amount. It will be linked to this bank transaction ID."
-        )
-    }
-
-    val legacyMatch = transactions.any {
-        kotlin.math.abs(it.amount - bankTransaction.amount) < 0.005 &&
-                normaliseTransactionText(it.description) == bankDescription &&
-                it.date.isBlank() &&
-                it.bankTransactionId.isBlank()
-    }
-
-    if (legacyMatch) {
-        return BankSyncPreview(
-            transaction = bankTransaction,
-            status = "WILL UPDATE",
-            statusDetail = "An older manual entry matches the description and amount but has no date or bank ID. It will be upgraded with the bank details."
-        )
-    }
-
-    return BankSyncPreview(
-        transaction = bankTransaction,
-        status = "NEW",
-        statusDetail = "No existing entry matches. A new transaction will be added."
-    )
-}
-
-
 @Composable
 fun BankSyncScreen(
     onBack: () -> Unit
 ) {
 
-    val context = LocalContext.current
+    val context =
+        LocalContext.current
+
 
     val keyboardController =
         LocalSoftwareKeyboardController.current
+
 
     var bankTransactions by remember {
         mutableStateOf<List<BankTransaction>>(emptyList())
     }
 
+
     var previewItems by remember {
         mutableStateOf<List<BankSyncPreview>>(emptyList())
     }
+
 
     var syncMessage by remember {
         mutableStateOf<String?>(null)
     }
 
+
     var transactionCount by remember {
         mutableStateOf("10")
     }
 
+
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-            .padding(20.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .padding(20.dp)
     ) {
 
-        ScreenBackButton(onBack = onBack)
+        ScreenBackButton(
+            onBack =
+                onBack
+        )
+
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            horizontalArrangement =
+                Arrangement.Center
         ) {
+
             Text(
-                text = "Virgin Money Sync",
-                style = MaterialTheme.typography.headlineMedium
+                text =
+                    "Virgin Money Sync",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .headlineMedium
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
 
         Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.White,
-                contentColor = HOMEHUB_TEXT
-            )
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            shape =
+                RoundedCornerShape(14.dp),
+
+            colors =
+                CardDefaults.cardColors(
+                    containerColor =
+                        Color.White,
+
+                    contentColor =
+                        HOMEHUB_TEXT
+                )
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+
+            Column(
+                modifier =
+                    Modifier.padding(14.dp)
+            ) {
+
                 Text(
-                    text = "Bank sync test",
-                    style = MaterialTheme.typography.titleMedium
+                    text =
+                        "Bank sync test",
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .titleMedium
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
+
+                Spacer(
+                    modifier =
+                        Modifier.height(4.dp)
+                )
+
 
                 Text(
-                    text = "This screen currently uses a test bank feed. Nothing is changed in HomeHub when you fetch the transactions. Review the action shown for each transaction before importing.",
-                    style = MaterialTheme.typography.bodyMedium
+                    text =
+                        "This screen currently uses a test bank feed. Nothing is changed in HomeHub when you fetch the transactions. Review the action shown for each transaction before importing.",
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .bodyMedium
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
 
-        OutlinedTextField(
-            value = transactionCount,
-            onValueChange = { value ->
-                transactionCount = value.filter { it.isDigit() }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Number of transactions to review") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Number
-            )
+        Spacer(
+            modifier =
+                Modifier.height(10.dp)
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value =
+                transactionCount,
+
+            onValueChange = { value ->
+
+                transactionCount =
+                    value.filter {
+                        it.isDigit()
+                    }
+            },
+
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            label = {
+                Text(
+                    "Number of transactions to review"
+                )
+            },
+
+            singleLine =
+                true,
+
+            keyboardOptions =
+                KeyboardOptions(
+                    keyboardType =
+                        KeyboardType.Number
+                )
+        )
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
 
         Button(
             onClick = {
+
                 keyboardController?.hide()
 
-                val count =
-                    transactionCount.toIntOrNull()?.coerceAtLeast(1)
 
-                if (count == null) {
-                    syncMessage = "Enter a valid number of transactions to review."
+                val count =
+                    transactionCount
+                        .toIntOrNull()
+                        ?.coerceAtLeast(1)
+
+
+                if (
+                    count == null
+                ) {
+
+                    syncMessage =
+                        "Enter a valid number of transactions to review."
+
                     return@Button
                 }
 
-                val existing = loadTransactions(context)
-                bankTransactions = fakeBankTransactions(
-                    existing,
-                    count
-                )
-                previewItems = bankTransactions.map {
-                    getBankSyncPreviewStatus(existing, it)
-                }
-                syncMessage = "Fetched ${bankTransactions.size} bank transaction(s). Review what will happen below before importing."
+
+                val existing =
+                    loadTransactions(
+                        context
+                    )
+
+
+                bankTransactions =
+                    fakeBankTransactions(
+                        existing,
+                        count
+                    )
+
+
+                /*
+                 * Build ONE import plan for the whole batch.
+                 *
+                 * This is deliberately different from calling
+                 * getBankSyncPreviewStatus() independently for
+                 * each transaction because the batch planner
+                 * reserves matched rows.
+                 */
+                previewItems =
+                    buildBankSyncPreview(
+                        existing,
+                        bankTransactions
+                    )
+
+
+                syncMessage =
+                    "Fetched ${bankTransactions.size} bank transaction(s). Review what will happen below before importing."
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
         ) {
-            Text("FETCH TRANSACTIONS")
+
+            Text(
+                "FETCH TRANSACTIONS"
+            )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
 
-        if (previewItems.isNotEmpty()) {
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
 
-            val alreadyImported = previewItems.count {
-                it.status == "ALREADY IMPORTED"
-            }
 
-            val willLink = previewItems.count {
-                it.status == "WILL LINK"
-            }
+        if (
+            previewItems.isNotEmpty()
+        ) {
 
-            val willUpdate = previewItems.count {
-                it.status == "WILL UPDATE"
-            }
+            val alreadyImported =
+                previewItems.count {
+                    it.status ==
+                            "ALREADY IMPORTED"
+                }
 
-            val newCount = previewItems.count {
-                it.status == "NEW"
-            }
+
+            val willLink =
+                previewItems.count {
+                    it.status ==
+                            "WILL LINK"
+                }
+
+
+            val willUpdate =
+                previewItems.count {
+                    it.status ==
+                            "WILL UPDATE"
+                }
+
+
+            val newCount =
+                previewItems.count {
+                    it.status ==
+                            "NEW"
+                }
+
 
             Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White,
-                    contentColor = HOMEHUB_TEXT
-                )
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                shape =
+                    RoundedCornerShape(12.dp),
+
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor =
+                            Color.White,
+
+                        contentColor =
+                            HOMEHUB_TEXT
+                    )
             ) {
+
                 Column(
-                    modifier = Modifier.padding(12.dp)
+                    modifier =
+                        Modifier.padding(12.dp)
                 ) {
+
                     Text(
-                        text = "IMPORT PREVIEW",
-                        style = MaterialTheme.typography.titleMedium
+                        text =
+                            "IMPORT PREVIEW",
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .titleMedium
                     )
 
-                    Spacer(modifier = Modifier.height(4.dp))
 
-                    Text(
-                        text = "$newCount NEW  •  $willLink WILL LINK  •  $willUpdate WILL UPDATE  •  $alreadyImported ALREADY IMPORTED",
-                        style = MaterialTheme.typography.bodyMedium
+                    Spacer(
+                        modifier =
+                            Modifier.height(4.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Only NEW / WILL LINK / WILL UPDATE records will change your saved transactions. ALREADY IMPORTED records will be skipped.",
-                        style = MaterialTheme.typography.bodySmall
+                        text =
+                            "$newCount NEW  •  $willLink WILL LINK  •  $willUpdate WILL UPDATE  •  $alreadyImported ALREADY IMPORTED",
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .bodyMedium
+                    )
+
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(6.dp)
+                    )
+
+
+                    Text(
+                        text =
+                            "Only NEW / WILL LINK / WILL UPDATE records will change your saved transactions. ALREADY IMPORTED records will be skipped.",
+
+                        style =
+                            MaterialTheme
+                                .typography
+                                .bodySmall
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+
+            Spacer(
+                modifier =
+                    Modifier.height(8.dp)
+            )
+
 
             Button(
                 onClick = {
-                    val existing = loadTransactions(context).toMutableList()
-                    var imported = 0
-                    var matched = 0
-                    var skipped = 0
 
-                    bankTransactions.forEach { bankTransaction ->
+                    /*
+                     * Use the exact plan shown in the preview.
+                     *
+                     * We do NOT re-run matching here.
+                     *
+                     * This guarantees that what the user saw
+                     * in the preview is what actually happens.
+                     */
+                    val existing =
+                        loadTransactions(
+                            context
+                        ).toMutableList()
+
+
+                    var imported =
+                        0
+
+
+                    var matched =
+                        0
+
+
+                    var skipped =
+                        0
+
+
+                    previewItems.forEach { preview ->
+
+                        val bankTransaction =
+                            preview.transaction
+
+
                         val matchIndex =
-                            findMatchingTransactionIndex(
-                                existing,
-                                bankTransaction
-                            )
+                            preview.existingIndex
 
-                        if (matchIndex != null) {
-                            val existingTransaction = existing[matchIndex]
 
-                            if (
-                                bankTransaction.id.isNotBlank() &&
-                                existingTransaction.bankTransactionId == bankTransaction.id
-                            ) {
+                        when {
+
+                            preview.status ==
+                                    "ALREADY IMPORTED" -> {
+
                                 skipped++
-                            } else {
-                                existing[matchIndex] =
+                            }
+
+
+                            matchIndex != null &&
+                                    matchIndex in existing.indices -> {
+
+                                val existingTransaction =
+                                    existing[
+                                        matchIndex
+                                    ]
+
+
+                                existing[
+                                    matchIndex
+                                ] =
                                     existingTransaction.copy(
-                                        description = bankTransaction.description,
-                                        amount = bankTransaction.amount,
-                                        date = bankTransaction.date,
-                                        source = if (existingTransaction.source == "MANUAL") {
-                                            "MATCHED"
-                                        } else {
-                                            "BANK"
-                                        },
-                                        bankTransactionId = bankTransaction.id
+
+                                        description =
+                                            bankTransaction.description,
+
+                                        amount =
+                                            bankTransaction.amount,
+
+                                        date =
+                                            bankTransaction.date,
+
+                                        source =
+                                            if (
+                                                existingTransaction.source ==
+                                                "MANUAL"
+                                            ) {
+
+                                                "MATCHED"
+
+                                            } else {
+
+                                                "BANK"
+                                            },
+
+                                        bankTransactionId =
+                                            bankTransaction.id
                                     )
+
 
                                 matched++
                             }
-                        } else {
-                            existing.add(
-                                AccountTransaction(
-                                    description = bankTransaction.description,
-                                    amount = bankTransaction.amount,
-                                    date = bankTransaction.date,
-                                    source = "BANK",
-                                    bankTransactionId = bankTransaction.id
+
+
+                            else -> {
+
+                                existing.add(
+                                    AccountTransaction(
+                                        description =
+                                            bankTransaction.description,
+
+                                        amount =
+                                            bankTransaction.amount,
+
+                                        date =
+                                            bankTransaction.date,
+
+                                        source =
+                                            "BANK",
+
+                                        bankTransactionId =
+                                            bankTransaction.id
+                                    )
                                 )
-                            )
-                            imported++
+
+
+                                imported++
+                            }
                         }
                     }
 
-                    saveTransactions(context, existing)
+
+                    saveTransactions(
+                        context,
+                        existing
+                    )
+
 
                     syncMessage =
                         "Import complete: $imported new, $matched linked/updated, $skipped already imported and skipped."
 
-                    previewItems = bankTransactions.map {
-                        getBankSyncPreviewStatus(existing, it)
-                    }
+
+                    /*
+                     * Rebuild the preview from the saved data.
+                     *
+                     * Imported transactions should now show
+                     * ALREADY IMPORTED because their bank IDs
+                     * have been stored.
+                     */
+                    previewItems =
+                        buildBankSyncPreview(
+                            existing,
+                            bankTransactions
+                        )
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = HOMEHUB_SECONDARY,
-                    contentColor = HOMEHUB_PRIMARY
-                )
+
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor =
+                            HOMEHUB_SECONDARY,
+
+                        contentColor =
+                            HOMEHUB_PRIMARY
+                    )
             ) {
-                Text("IMPORT / UPSERT")
+
+                Text(
+                    "IMPORT / UPSERT"
+                )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
 
-            Text(
-                text = "What will happen to each transaction",
-                style = MaterialTheme.typography.titleMedium
+            Spacer(
+                modifier =
+                    Modifier.height(10.dp)
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text =
+                    "What will happen to each transaction",
+
+                style =
+                    MaterialTheme
+                        .typography
+                        .titleMedium
+            )
+
+
+            Spacer(
+                modifier =
+                    Modifier.height(6.dp)
+            )
+
 
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+
+                verticalArrangement =
+                    Arrangement.spacedBy(6.dp)
             ) {
-                items(previewItems) { preview ->
-                    val transaction = preview.transaction
+
+                items(
+                    previewItems
+                ) { preview ->
+
+                    val transaction =
+                        preview.transaction
+
 
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color.White,
-                            contentColor = HOMEHUB_TEXT
-                        )
+                        modifier =
+                            Modifier.fillMaxWidth(),
+
+                        shape =
+                            RoundedCornerShape(12.dp),
+
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor =
+                                    Color.White,
+
+                                contentColor =
+                                    HOMEHUB_TEXT
+                            )
                     ) {
+
                         Column(
-                            modifier = Modifier.padding(10.dp)
+                            modifier =
+                                Modifier.padding(10.dp)
                         ) {
+
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+
+                                verticalAlignment =
+                                    Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = transaction.description,
-                                        style = MaterialTheme.typography.titleSmall
-                                    )
+
+                                Column(
+                                    modifier =
+                                        Modifier.weight(1f)
+                                ) {
 
                                     Text(
-                                        text = transaction.date,
-                                        style = MaterialTheme.typography.bodySmall
+                                        text =
+                                            transaction.description,
+
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .titleSmall
+                                    )
+
+
+                                    Text(
+                                        text =
+                                            transaction.date,
+
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .bodySmall
                                     )
                                 }
 
+
                                 Text(
-                                    text = formatSignedMoney(transaction.amount),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = if (transaction.amount >= 0) {
-                                        HOMEHUB_INCOME
-                                    } else {
-                                        HOMEHUB_OUTGOING
-                                    }
+                                    text =
+                                        formatSignedMoney(
+                                            transaction.amount
+                                        ),
+
+                                    style =
+                                        MaterialTheme
+                                            .typography
+                                            .bodyLarge,
+
+                                    color =
+                                        if (
+                                            transaction.amount >= 0
+                                        ) {
+
+                                            HOMEHUB_INCOME
+
+                                        } else {
+
+                                            HOMEHUB_OUTGOING
+                                        }
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(4.dp))
 
-                            Text(
-                                text = preview.status,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = when (preview.status) {
-                                    "NEW" -> HOMEHUB_PRIMARY
-                                    "ALREADY IMPORTED" -> HOMEHUB_INCOME
-                                    "WILL LINK" -> HOMEHUB_INCOME
-                                    "WILL UPDATE" -> HOMEHUB_PRIMARY
-                                    else -> HOMEHUB_TEXT
-                                }
+                            Spacer(
+                                modifier =
+                                    Modifier.height(4.dp)
                             )
 
+
                             Text(
-                                text = preview.statusDetail,
-                                style = MaterialTheme.typography.bodySmall
+                                text =
+                                    preview.status,
+
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .labelLarge,
+
+                                color =
+                                    when (
+                                        preview.status
+                                    ) {
+
+                                        "NEW" ->
+                                            HOMEHUB_PRIMARY
+
+                                        "ALREADY IMPORTED" ->
+                                            HOMEHUB_INCOME
+
+                                        "WILL LINK" ->
+                                            HOMEHUB_INCOME
+
+                                        "WILL UPDATE" ->
+                                            HOMEHUB_PRIMARY
+
+                                        else ->
+                                            HOMEHUB_TEXT
+                                    }
+                            )
+
+
+                            Text(
+                                text =
+                                    preview.statusDetail,
+
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .bodySmall
                             )
                         }
                     }
@@ -3404,35 +4275,71 @@ fun BankSyncScreen(
             }
 
         } else {
+
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Top
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+
+                horizontalAlignment =
+                    Alignment.CenterHorizontally,
+
+                verticalArrangement =
+                    Arrangement.Top
             ) {
+
                 Text(
-                    text = "Nothing fetched yet.",
-                    style = MaterialTheme.typography.bodyLarge
+                    text =
+                        "Nothing fetched yet.",
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .bodyLarge
                 )
             }
         }
 
-        if (syncMessage != null) {
-            Spacer(modifier = Modifier.height(8.dp))
+
+        if (
+            syncMessage != null
+        ) {
+
+            Spacer(
+                modifier =
+                    Modifier.height(8.dp)
+            )
+
 
             Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White,
-                    contentColor = HOMEHUB_TEXT
-                )
+                modifier =
+                    Modifier.fillMaxWidth(),
+
+                shape =
+                    RoundedCornerShape(12.dp),
+
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor =
+                            Color.White,
+
+                        contentColor =
+                            HOMEHUB_TEXT
+                    )
             ) {
+
                 Text(
-                    text = syncMessage!!,
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodyMedium
+                    text =
+                        syncMessage!!,
+
+                    modifier =
+                        Modifier.padding(12.dp),
+
+                    style =
+                        MaterialTheme
+                            .typography
+                            .bodyMedium
                 )
             }
         }
@@ -3510,12 +4417,21 @@ fun AccountTransactionRow(
                     )
 
 
-                    if (transaction.date.isNotBlank()) {
+                    if (
+                        transaction.date.isNotBlank()
+                    ) {
+
                         Text(
-                            text = transaction.date,
-                            style = MaterialTheme.typography.bodySmall
+                            text =
+                                transaction.date,
+
+                            style =
+                                MaterialTheme
+                                    .typography
+                                    .bodySmall
                         )
                     }
+
 
                     Text(
                         text =
@@ -4275,6 +5191,7 @@ fun NotesScreen(
         )
     }
 }
+
 
 /* -------------------------------------------------- */
 /* NOTE ENTRY                                         */
