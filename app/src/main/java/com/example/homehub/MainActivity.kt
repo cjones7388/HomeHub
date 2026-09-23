@@ -2174,6 +2174,39 @@ private fun fetchEnduteTransactions(
     return transactions
 }
 
+
+/**
+ * One-off cleanup for bank-link metadata.
+ *
+ * This deliberately clears both bank IDs from every stored transaction.
+ * Manual transactions that were previously marked MATCHED are returned to
+ * MANUAL so the next real Endute sync can match them again from description,
+ * amount and date. BANK transactions remain BANK; only their link metadata is
+ * removed.
+ */
+fun resetAllBankLinks(
+    context: Context
+): Int {
+    val existing = loadTransactions(context)
+
+    val cleaned = existing.map { transaction ->
+        transaction.copy(
+            source = if (transaction.source == "MATCHED") "MANUAL" else transaction.source,
+            bankTransactionId = "",
+            upstreamBankTransactionId = ""
+        )
+    }
+
+    val changedCount = existing.count {
+        it.bankTransactionId.isNotBlank() ||
+                it.upstreamBankTransactionId.isNotBlank() ||
+                it.source == "MATCHED"
+    }
+
+    saveTransactions(context, cleaned)
+    return changedCount
+}
+
 /* -------------------------------------------------- */
 /* RECEIPTS SCREEN                                    */
 /* -------------------------------------------------- */
@@ -3324,6 +3357,85 @@ data class BankSyncPreview(
 )
 
 
+data class BankMatchDebugCandidate(
+    val manualIndex: Int,
+    val manual: AccountTransaction,
+    val score: Int,
+    val amountDifference: Double,
+    val amountMatches: Boolean,
+    val manualWords: Set<String>,
+    val bankWords: Set<String>,
+    val exactWords: Set<String>,
+    val reason: String
+)
+
+data class BankMatchDebug(
+    val bank: BankTransaction,
+    val preview: BankSyncPreview,
+    val candidates: List<BankMatchDebugCandidate>
+)
+
+
+private fun buildBankMatchDebug(
+    transactions: List<AccountTransaction>,
+    preview: BankSyncPreview
+): BankMatchDebug {
+    val bank = preview.transaction
+    val bankText = listOf(
+        bank.merchantName,
+        bank.counterparty,
+        bank.description
+    ).filter { it.isNotBlank() }.joinToString(" ")
+    val bankWords = transactionWords(bankText)
+
+    val candidates = transactions.mapIndexed { index, manual ->
+        val amountDifference = kotlin.math.abs(manual.amount - bank.amount)
+        val amountMatches = amountDifference < 0.005
+        val manualWords = transactionWords(manual.description)
+        val exactWords = manualWords.intersect(bankWords)
+        val score = transactionMatchScore(manual, bank)
+
+        val reason = when {
+            manual.bankTransactionId.isNotBlank() ||
+                    manual.upstreamBankTransactionId.isNotBlank() ->
+                "EXCLUDED: manual entry already has a bank ID, so the matcher will not reuse it."
+            !amountMatches ->
+                "REJECTED: amount mismatch. Bank = ${bank.amount}, manual = ${manual.amount}, difference = ${String.format("%.2f", amountDifference)}."
+            manualWords.isEmpty() ->
+                "REJECTED: manual description has no usable words after noise removal."
+            exactWords.isNotEmpty() ->
+                "MATCHING: exact word(s) = ${exactWords.sorted().joinToString(", ")}; matcher score = $score."
+            score > 0 ->
+                "MATCHING: normalised/fuzzy text match produced score $score."
+            else ->
+                "REJECTED: amount matches, but no usable merchant/description word match was found."
+        }
+
+        BankMatchDebugCandidate(
+            manualIndex = index,
+            manual = manual,
+            score = score,
+            amountDifference = amountDifference,
+            amountMatches = amountMatches,
+            manualWords = manualWords,
+            bankWords = bankWords,
+            exactWords = exactWords,
+            reason = reason
+        )
+    }.sortedWith(
+        compareByDescending<BankMatchDebugCandidate> { it.score }
+            .thenByDescending { it.amountMatches }
+            .thenByDescending { it.exactWords.size }
+    )
+
+    return BankMatchDebug(
+        bank = bank,
+        preview = preview,
+        candidates = candidates
+    )
+}
+
+
 private fun getBankSyncPreviewStatus(
     transactions: List<AccountTransaction>,
     bankTransaction: BankTransaction
@@ -3384,16 +3496,18 @@ fun buildBankSyncPreview(
     transactions: List<AccountTransaction>,
     bankTransactions: List<BankTransaction>
 ): List<BankSyncPreview> {
-    // First mark transactions that are already linked by a stable bank ID.
-    val previews = bankTransactions.map { bankTransaction ->
+    val reservedIndices = mutableSetOf<Int>()
+
+    return bankTransactions.map { bankTransaction ->
         val bankId = bankTransaction.id
         val upstreamId = bankTransaction.upstreamTransactionId
 
         if (bankId.isNotBlank()) {
-            val idIndex = transactions.indexOfFirst {
-                it.bankTransactionId == bankId
+            val idIndex = transactions.indices.firstOrNull { index ->
+                !reservedIndices.contains(index) &&
+                        transactions[index].bankTransactionId == bankId
             }
-            if (idIndex >= 0) {
+            if (idIndex != null) {
                 return@map BankSyncPreview(
                     transaction = bankTransaction,
                     status = "ALREADY IMPORTED",
@@ -3404,10 +3518,11 @@ fun buildBankSyncPreview(
         }
 
         if (upstreamId.isNotBlank()) {
-            val upstreamIndex = transactions.indexOfFirst {
-                it.upstreamBankTransactionId == upstreamId
+            val upstreamIndex = transactions.indices.firstOrNull { index ->
+                !reservedIndices.contains(index) &&
+                        transactions[index].upstreamBankTransactionId == upstreamId
             }
-            if (upstreamIndex >= 0) {
+            if (upstreamIndex != null) {
                 return@map BankSyncPreview(
                     transaction = bankTransaction,
                     status = "ALREADY IMPORTED",
@@ -3417,109 +3532,60 @@ fun buildBankSyncPreview(
             }
         }
 
-        BankSyncPreview(
-            transaction = bankTransaction,
-            status = "NEW",
-            statusDetail = "No sufficiently strong unique existing match was found. A new transaction will be added if you select it."
-        )
-    }.toMutableList()
+        val scored = transactions.mapIndexedNotNull { index, transaction ->
+            if (reservedIndices.contains(index)) {
+                return@mapIndexedNotNull null
+            }
 
-    // Build every possible match first. This is deliberately NOT greedy.
-    // A bank transaction near the start of the feed must not steal a manual
-    // entry from a later transaction that is a much better match.
-    data class Match(
-        val bankIndex: Int,
-        val manualIndex: Int,
-        val score: Int
-    )
-
-    val matches = mutableListOf<Match>()
-
-    bankTransactions.forEachIndexed { bankIndex, bankTransaction ->
-        if (previews[bankIndex].status == "ALREADY IMPORTED") return@forEachIndexed
-
-        transactions.forEachIndexed { manualIndex, manualTransaction ->
             val score = transactionMatchScore(
-                manualTransaction,
+                transaction,
                 bankTransaction
             )
 
-            if (score >= 75) {
-                matches.add(
-                    Match(
-                        bankIndex = bankIndex,
-                        manualIndex = manualIndex,
-                        score = score
-                    )
-                )
-            }
-        }
-    }
+            if (score > 0) index to score else null
+        }.sortedByDescending { it.second }
 
-    val unmatchedBanks =
-        bankTransactions.indices
-            .filter { previews[it].status != "ALREADY IMPORTED" }
-            .toMutableSet()
-
-    val unmatchedManuals = transactions.indices.toMutableSet()
-
-    // Resolve the strongest matches globally. At each step, only accept a
-    // match if it is the unique strongest candidate for BOTH sides. This
-    // prevents a weak/generic match from consuming an entry needed by an
-    // exact merchant/word match.
-    while (true) {
-        val available = matches.filter {
-            it.bankIndex in unmatchedBanks &&
-                    it.manualIndex in unmatchedManuals
+        val top = scored.firstOrNull()
+        val matchIndex = if (
+            top != null &&
+            top.second >= 75 &&
+            scored.count { it.second == top.second } == 1
+        ) {
+            top.first
+        } else {
+            null
         }
 
-        if (available.isEmpty()) break
-
-        val highestScore = available.maxOf { it.score }
-        val highest = available.filter { it.score == highestScore }
-
-        val bankCounts = highest.groupingBy { it.bankIndex }.eachCount()
-        val manualCounts = highest.groupingBy { it.manualIndex }.eachCount()
-
-        val resolvable = highest.filter {
-            bankCounts[it.bankIndex] == 1 &&
-                    manualCounts[it.manualIndex] == 1
-        }
-
-        if (resolvable.isEmpty()) {
-            // Do not guess where the strongest remaining matches are tied.
-            // Remove those tied edges and continue looking for weaker,
-            // unambiguous matches between the remaining rows.
-            val tiedBanks = highest.map { it.bankIndex }.toSet()
-            val tiedManuals = highest.map { it.manualIndex }.toSet()
-
-            matches.removeAll {
-                it.score == highestScore &&
-                        (it.bankIndex in tiedBanks || it.manualIndex in tiedManuals)
-            }
-            continue
-        }
-
-        for (match in resolvable) {
-            if (match.bankIndex !in unmatchedBanks ||
-                match.manualIndex !in unmatchedManuals
-            ) {
-                continue
-            }
-
-            previews[match.bankIndex] = BankSyncPreview(
-                transaction = bankTransactions[match.bankIndex],
+        if (matchIndex != null) {
+            reservedIndices.add(matchIndex)
+            return@map BankSyncPreview(
+                transaction = bankTransaction,
                 status = "WILL LINK",
                 statusDetail = "A unique existing entry matches the amount and merchant/description. It will be linked and its HomeHub date will be changed to the bank transaction date.",
-                existingIndex = match.manualIndex
+                existingIndex = matchIndex
             )
-
-            unmatchedBanks.remove(match.bankIndex)
-            unmatchedManuals.remove(match.manualIndex)
         }
-    }
 
-    return previews
+        val detail = when {
+            scored.isEmpty() ->
+                "No existing entry matches the amount and merchant/description strongly enough. It will be treated as NEW unless you deselect it."
+
+            top != null &&
+                    top.second >= 60 &&
+                    scored.count { it.second == top.second } > 1 ->
+                "More than one existing entry matches this transaction equally well. HomeHub will not guess which one to link. It will be treated as NEW unless you deselect it."
+
+            else ->
+                "Existing entries may have the same amount, but the description/merchant match is not strong enough. It will be treated as NEW unless you deselect it."
+        }
+
+        BankSyncPreview(
+            transaction = bankTransaction,
+            status = "NEW",
+            statusDetail = detail,
+            existingIndex = null
+        )
+    }
 }
 
 
@@ -3532,12 +3598,14 @@ fun BankSyncScreen(
 
     var bankTransactions by remember { mutableStateOf<List<BankTransaction>>(emptyList()) }
     var previewItems by remember { mutableStateOf<List<BankSyncPreview>>(emptyList()) }
+    var debugManualTransactions by remember { mutableStateOf<List<AccountTransaction>>(emptyList()) }
     var selectedBankIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var syncMessage by remember { mutableStateOf<String?>(null) }
     var transactionCount by remember { mutableStateOf("") }
     var apiKeyInput by remember { mutableStateOf("") }
     var apiKeySaved by remember { mutableStateOf(hasStoredEnduteApiKey(context)) }
     var showApiKeyEntry by remember { mutableStateOf(!apiKeySaved) }
+    var showResetBankLinksDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -3695,6 +3763,40 @@ fun BankSyncScreen(
         }
 
         item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = HOMEHUB_TEXT
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "BANK LINK CLEANUP",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "One-off reset: clears all stored bank and upstream IDs. MATCHED manual entries are returned to MANUAL so the next Endute sync can rebuild the links using the real bank transactions.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { showResetBankLinksDialog = true },
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HOMEHUB_SECONDARY,
+                            contentColor = HOMEHUB_PRIMARY
+                        )
+                    ) {
+                        Text("RESET ALL BANK LINKS")
+                    }
+                }
+            }
+        }
+
+        item {
             OutlinedTextField(
                 value = transactionCount,
                 onValueChange = { value ->
@@ -3746,6 +3848,7 @@ fun BankSyncScreen(
 
                             context.mainExecutor.execute {
                                 bankTransactions = fetched
+                                debugManualTransactions = existing
                                 previewItems = preview
                                 selectedBankIds = initiallySelected
                                 syncMessage = "Fetched ${fetched.size} transaction(s) from Endute. Review the selections below before importing."
@@ -3753,6 +3856,7 @@ fun BankSyncScreen(
                         } catch (e: Exception) {
                             context.mainExecutor.execute {
                                 bankTransactions = emptyList()
+                                debugManualTransactions = emptyList()
                                 previewItems = emptyList()
                                 selectedBankIds = emptySet()
                                 syncMessage = e.message ?: "Endute error: Unknown error"
@@ -3926,6 +4030,7 @@ fun BankSyncScreen(
                         }
 
                         saveTransactions(context, existing)
+                        debugManualTransactions = existing.toList()
                         syncMessage = "Import complete: $imported new, $matched linked, $skipped already imported. Unselected transactions were left untouched."
                         previewItems = buildBankSyncPreview(existing, bankTransactions)
                         selectedBankIds = previewItems
@@ -3940,6 +4045,89 @@ fun BankSyncScreen(
                         contentColor = HOMEHUB_PRIMARY
                     )
                 ) { Text("IMPORT / UPSERT SELECTED") }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White,
+                        contentColor = HOMEHUB_TEXT
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "MATCH DEBUG",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Shows the exact bank data and the manual transactions actually compared. The raw amounts include the sign so money in/out cannot be hidden by the display formatting.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            items(previewItems) { preview ->
+                val debug = buildBankMatchDebug(
+                    debugManualTransactions,
+                    preview
+                )
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White,
+                        contentColor = HOMEHUB_TEXT
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "${preview.status} — ${preview.transaction.merchantName.ifBlank { preview.transaction.description }}",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("BANK DESCRIPTION: ${preview.transaction.description}", style = MaterialTheme.typography.bodySmall)
+                        Text("MERCHANT: ${preview.transaction.merchantName.ifBlank { "null/blank" }}", style = MaterialTheme.typography.bodySmall)
+                        Text("COUNTERPARTY: ${preview.transaction.counterparty.ifBlank { "null/blank" }}", style = MaterialTheme.typography.bodySmall)
+                        Text("BANK AMOUNT RAW: ${preview.transaction.amount}", style = MaterialTheme.typography.bodySmall)
+                        Text("BANK DATE: ${preview.transaction.date}", style = MaterialTheme.typography.bodySmall)
+                        Text("ENDUTE ID: ${preview.transaction.id}", style = MaterialTheme.typography.bodySmall)
+                        Text("UPSTREAM ID: ${preview.transaction.upstreamTransactionId.ifBlank { "blank" }}", style = MaterialTheme.typography.bodySmall)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("DECISION: ${preview.status}", style = MaterialTheme.typography.bodyMedium)
+                        Text("DECISION REASON: ${preview.statusDetail}", style = MaterialTheme.typography.bodySmall)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "MANUAL CANDIDATES (${debug.candidates.size}) — strongest 10 shown",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+
+                        if (debug.candidates.isEmpty()) {
+                            Text("NO MANUAL TRANSACTIONS TO COMPARE", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            debug.candidates.take(10).forEach { candidate ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("#${candidate.manualIndex + 1}  SCORE: ${candidate.score}", style = MaterialTheme.typography.bodyMedium)
+                                Text("MANUAL DESCRIPTION: ${candidate.manual.description}", style = MaterialTheme.typography.bodySmall)
+                                Text("MANUAL AMOUNT RAW: ${candidate.manual.amount}", style = MaterialTheme.typography.bodySmall)
+                                Text("MANUAL DATE: ${candidate.manual.date}", style = MaterialTheme.typography.bodySmall)
+                                Text("MANUAL SOURCE: ${candidate.manual.source}", style = MaterialTheme.typography.bodySmall)
+                                Text("MANUAL BANK ID: ${candidate.manual.bankTransactionId.ifBlank { "none" }}", style = MaterialTheme.typography.bodySmall)
+                                Text("MANUAL UPSTREAM ID: ${candidate.manual.upstreamBankTransactionId.ifBlank { "none" }}", style = MaterialTheme.typography.bodySmall)
+                                Text("AMOUNT MATCH: ${candidate.amountMatches}", style = MaterialTheme.typography.bodySmall)
+                                Text("AMOUNT DIFFERENCE: ${String.format("%.2f", candidate.amountDifference)}", style = MaterialTheme.typography.bodySmall)
+                                Text("MANUAL WORDS: ${candidate.manualWords.sorted().joinToString(", ").ifBlank { "none" }}", style = MaterialTheme.typography.bodySmall)
+                                Text("BANK WORDS: ${candidate.bankWords.sorted().joinToString(", ").ifBlank { "none" }}", style = MaterialTheme.typography.bodySmall)
+                                Text("EXACT WORDS: ${candidate.exactWords.sorted().joinToString(", ").ifBlank { "none" }}", style = MaterialTheme.typography.bodySmall)
+                                Text("WHY: ${candidate.reason}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
             }
 
             item {
@@ -4028,8 +4216,41 @@ fun BankSyncScreen(
             }
         }
     }
-}
 
+    if (showResetBankLinksDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetBankLinksDialog = false },
+            title = { Text("Reset all bank links?") },
+            text = {
+                Text(
+                    "This will clear every stored bank ID and upstream bank ID in HomeHub. Any MATCHED manual entries will become MANUAL again. Your descriptions, amounts and dates will not be changed. The next Endute sync will rebuild the real links.\n\nThis is intended as a one-off cleanup of previous test links."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val cleanedCount = resetAllBankLinks(context)
+                        bankTransactions = emptyList()
+                        debugManualTransactions = loadTransactions(context)
+                        previewItems = emptyList()
+                        selectedBankIds = emptySet()
+                        syncMessage = "Bank-link cleanup complete. Cleared bank IDs from $cleanedCount transaction(s). Fetch Endute transactions again to rebuild the real links."
+                        showResetBankLinksDialog = false
+                    }
+                ) {
+                    Text("RESET")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showResetBankLinksDialog = false }
+                ) {
+                    Text("CANCEL")
+                }
+            }
+        )
+    }
+}
 
 /* -------------------------------------------------- */
 /* ACCOUNT TRANSACTION ROW                            */
