@@ -1,5 +1,4 @@
 package com.example.homehub
-
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -37,7 +36,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -114,10 +112,6 @@ private val HOMEHUB_SURFACE_VARIANT =
     Color(0xFFE8EEF7)
 
 
-/* -------------------------------------------------- */
-/* BILL                                               */
-/* -------------------------------------------------- */
-
 data class Bill(
     val name: String,
     val dueDay: Int,
@@ -126,50 +120,21 @@ data class Bill(
 )
 
 
-/* -------------------------------------------------- */
-/* ACCOUNT TRANSACTION                                */
-/* -------------------------------------------------- */
-
 data class AccountTransaction(
     val description: String,
     val amount: Double,
     val date: String = "",
+    val source: String = "MANUAL",
     val bankTransactionId: String = ""
 )
 
-
-/* -------------------------------------------------- */
-/* BANK TRANSACTION                                   */
-/* -------------------------------------------------- */
-
 data class BankTransaction(
     val id: String,
-    val date: String,
     val description: String,
-    val amount: Double
+    val amount: Double,
+    val date: String
 )
 
-
-/* -------------------------------------------------- */
-/* BANK IMPORT STATUS                                 */
-/* -------------------------------------------------- */
-
-enum class BankImportStatus {
-    NEW,
-    ALREADY_EXISTS,
-    MATCHED_TO_MANUAL
-}
-
-
-data class BankImportPreviewItem(
-    val transaction: BankTransaction,
-    val status: BankImportStatus
-)
-
-
-/* -------------------------------------------------- */
-/* MAIN ACTIVITY                                      */
-/* -------------------------------------------------- */
 
 class MainActivity : ComponentActivity() {
 
@@ -797,21 +762,8 @@ fun HomeHubApp(
     onConnectGoogle: () -> Unit
 ) {
 
-    val context =
-        LocalContext.current
-
-
     var currentScreen by remember {
         mutableStateOf("home")
-    }
-
-
-    var transactions by remember {
-        mutableStateOf(
-            loadTransactions(
-                context
-            ).toList()
-        )
     }
 
 
@@ -871,14 +823,7 @@ fun HomeHubApp(
     ) {
 
         currentScreen =
-            when (currentScreen) {
-
-                "bank_import" ->
-                    "receipts"
-
-                else ->
-                    "home"
-            }
+            "home"
     }
 
 
@@ -966,48 +911,18 @@ fun HomeHubApp(
                                 "home"
                         },
 
-                        transactions =
-                            transactions,
-
-                        onTransactionsChanged = {
-                            transactions =
-                                it
-                        },
-
-                        onBankImportClick = {
+                        onBankSync = {
                             currentScreen =
-                                "bank_import"
+                                "bankSync"
                         }
                     )
                 }
 
 
-                "bank_import" -> {
+                "bankSync" -> {
 
-                    BankImportScreen(
+                    BankSyncScreen(
                         onBack = {
-                            currentScreen =
-                                "receipts"
-                        },
-
-                        existingTransactions =
-                            transactions,
-
-                        onImportComplete = {
-                                bankTransactions ->
-
-                            val result =
-                                upsertBankTransactions(
-                                    context,
-                                    transactions,
-                                    bankTransactions
-                                )
-
-
-                            transactions =
-                                result.first
-
-
                             currentScreen =
                                 "receipts"
                         }
@@ -1795,69 +1710,43 @@ fun loadTransactions(
             Context.MODE_PRIVATE
         )
 
-
     val jsonText =
         preferences.getString(
             TRANSACTIONS_KEY,
             "[]"
         ) ?: "[]"
 
-
     val transactions =
         mutableListOf<AccountTransaction>()
 
-
     try {
+        val array = JSONArray(jsonText)
 
-        val array =
-            JSONArray(
-                jsonText
-            )
-
-
-        for (
-        i in 0 until array.length()
-        ) {
-
-            val item =
-                array.getJSONObject(i)
-
+        for (i in 0 until array.length()) {
+            val item = array.getJSONObject(i)
 
             transactions.add(
                 AccountTransaction(
                     description =
-                        item.optString(
-                            "description"
-                        ),
+                        item.optString("description", ""),
 
                     amount =
-                        item.optDouble(
-                            "amount",
-                            0.0
-                        ),
+                        item.optDouble("amount", 0.0),
 
                     date =
-                        item.optString(
-                            "date",
-                            ""
-                        ),
+                        item.optString("date", ""),
+
+                    source =
+                        item.optString("source", "MANUAL"),
 
                     bankTransactionId =
-                        item.optString(
-                            "bankTransactionId",
-                            ""
-                        )
+                        item.optString("bankTransactionId", "")
                 )
             )
         }
-
-    } catch (
-        e: Exception
-    ) {
-
+    } catch (e: Exception) {
         return mutableListOf()
     }
-
 
     return transactions
 }
@@ -1868,38 +1757,19 @@ fun saveTransactions(
     transactions: List<AccountTransaction>
 ) {
 
-    val array =
-        JSONArray()
-
+    val array = JSONArray()
 
     transactions.forEach { transaction ->
-
         array.put(
             JSONObject().apply {
-
-                put(
-                    "description",
-                    transaction.description
-                )
-
-                put(
-                    "amount",
-                    transaction.amount
-                )
-
-                put(
-                    "date",
-                    transaction.date
-                )
-
-                put(
-                    "bankTransactionId",
-                    transaction.bankTransactionId
-                )
+                put("description", transaction.description)
+                put("amount", transaction.amount)
+                put("date", transaction.date)
+                put("source", transaction.source)
+                put("bankTransactionId", transaction.bankTransactionId)
             }
         )
     }
-
 
     context
         .getSharedPreferences(
@@ -1915,192 +1785,92 @@ fun saveTransactions(
 }
 
 
-/* -------------------------------------------------- */
-/* BANK UPSERT                                        */
-/* -------------------------------------------------- */
-
-fun upsertBankTransactions(
-    context: Context,
-    existingTransactions:
-    List<AccountTransaction>,
-
-    bankTransactions:
-    List<BankTransaction>
-): Pair<List<AccountTransaction>, Int> {
-
-    val updated =
-        existingTransactions.toMutableList()
+fun normaliseTransactionText(text: String): String {
+    return text
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), "")
+}
 
 
-    var addedCount =
-        0
+fun findMatchingTransactionIndex(
+    transactions: List<AccountTransaction>,
+    bankTransaction: BankTransaction
+): Int? {
 
+    val bankId = bankTransaction.id
 
-    bankTransactions.forEach { bankTransaction ->
-
-        /*
-         * FIRST:
-         *
-         * The bank transaction ID is the strongest
-         * possible match.
-         */
-        val alreadyExistsById =
-            bankTransaction.id.isNotBlank() &&
-                    updated.any {
-
-                        it.bankTransactionId.isNotBlank() &&
-
-                                it.bankTransactionId ==
-                                bankTransaction.id
-                    }
-
-
-        if (
-            alreadyExistsById
-        ) {
-
-            return@forEach
+    if (bankId.isNotBlank()) {
+        val idIndex = transactions.indexOfFirst {
+            it.bankTransactionId == bankId
         }
 
-
-        /*
-         * SECOND:
-         *
-         * Match an existing transaction using:
-         *
-         * date + description + amount
-         */
-        val exactMatchIndex =
-            updated.indexOfFirst {
-
-                it.description.equals(
-                    bankTransaction.description,
-                    ignoreCase = true
-                ) &&
-
-                        kotlin.math.abs(
-                            it.amount -
-                                    bankTransaction.amount
-                        ) < 0.005 &&
-
-                        it.date ==
-                        bankTransaction.date
-            }
-
-
-        if (
-            exactMatchIndex >= 0
-        ) {
-
-            /*
-             * The transaction already exists.
-             *
-             * If it was originally entered manually,
-             * attach the bank ID without creating
-             * another transaction.
-             */
-            if (
-                updated[exactMatchIndex]
-                    .bankTransactionId
-                    .isBlank() &&
-
-                bankTransaction.id.isNotBlank()
-            ) {
-
-                updated[exactMatchIndex] =
-                    updated[exactMatchIndex].copy(
-                        bankTransactionId =
-                            bankTransaction.id
-                    )
-            }
-
-
-            return@forEach
+        if (idIndex >= 0) {
+            return idIndex
         }
-
-
-        /*
-         * THIRD:
-         *
-         * Deal with old manual entries created before
-         * automatic dates were added.
-         */
-        val legacyMatchIndex =
-            updated.indexOfFirst {
-
-                it.date.isBlank() &&
-
-                        it.bankTransactionId.isBlank() &&
-
-                        it.description.equals(
-                            bankTransaction.description,
-                            ignoreCase = true
-                        ) &&
-
-                        kotlin.math.abs(
-                            it.amount -
-                                    bankTransaction.amount
-                        ) < 0.005
-            }
-
-
-        if (
-            legacyMatchIndex >= 0
-        ) {
-
-            updated[legacyMatchIndex] =
-                updated[legacyMatchIndex].copy(
-
-                    date =
-                        bankTransaction.date,
-
-                    bankTransactionId =
-                        bankTransaction.id
-                )
-
-
-            return@forEach
-        }
-
-
-        /*
-         * FOURTH:
-         *
-         * Nothing matched.
-         *
-         * This is a genuinely new bank transaction.
-         */
-        updated.add(
-            AccountTransaction(
-                description =
-                    bankTransaction.description,
-
-                amount =
-                    bankTransaction.amount,
-
-                date =
-                    bankTransaction.date,
-
-                bankTransactionId =
-                    bankTransaction.id
-            )
-        )
-
-
-        addedCount++
     }
 
+    val bankDescription =
+        normaliseTransactionText(bankTransaction.description)
 
-    saveTransactions(
-        context,
-        updated
+    val candidates = transactions.mapIndexedNotNull { index, transaction ->
+        val sameAmount =
+            kotlin.math.abs(transaction.amount - bankTransaction.amount) < 0.005
+
+        val sameDescription =
+            normaliseTransactionText(transaction.description) == bankDescription
+
+        val sameDate =
+            transaction.date.isNotBlank() &&
+                    transaction.date == bankTransaction.date
+
+        if (sameAmount && sameDescription && (sameDate || transaction.date.isBlank())) {
+            index
+        } else {
+            null
+        }
+    }
+
+    return candidates.singleOrNull()
+}
+
+
+fun fakeBankTransactions(
+    existingTransactions: List<AccountTransaction>,
+    requestedCount: Int
+): List<BankTransaction> {
+
+    val result = mutableListOf<BankTransaction>()
+
+    val today = LocalDate.now()
+
+    existingTransactions
+        .takeLast(10)
+        .forEachIndexed { index, transaction ->
+            result.add(
+                BankTransaction(
+                    id = "demo-match-${index + 1}",
+                    description = transaction.description,
+                    amount = transaction.amount,
+                    date = if (transaction.date.isBlank()) {
+                        today.minusDays((index + 1).toLong()).toString()
+                    } else {
+                        transaction.date
+                    }
+                )
+            )
+        }
+
+    val demoNewTransactions = listOf(
+        BankTransaction("demo-new-1", "DEMO COFFEE SHOP", -3.65, today.toString()),
+        BankTransaction("demo-new-2", "DEMO SUPERMARKET", -42.18, today.minusDays(1).toString()),
+        BankTransaction("demo-new-3", "DEMO PETROL", -55.00, today.minusDays(2).toString()),
+        BankTransaction("demo-new-4", "DEMO SALARY", 2500.00, today.minusDays(3).toString()),
+        BankTransaction("demo-new-5", "DEMO TRANSFER", -125.00, today.minusDays(4).toString())
     )
 
+    result.addAll(demoNewTransactions)
 
-    return Pair(
-        updated,
-        addedCount
-    )
+    return result.take(requestedCount.coerceAtLeast(1))
 }
 
 
@@ -2111,14 +1881,7 @@ fun upsertBankTransactions(
 @Composable
 fun ReceiptsScreen(
     onBack: () -> Unit,
-    transactions:
-    List<AccountTransaction>,
-
-    onTransactionsChanged:
-        (List<AccountTransaction>) -> Unit,
-
-    onBankImportClick:
-        () -> Unit
+    onBankSync: () -> Unit
 ) {
 
     val context =
@@ -2127,6 +1890,16 @@ fun ReceiptsScreen(
 
     val keyboardController =
         LocalSoftwareKeyboardController.current
+
+
+    var transactions by remember {
+
+        mutableStateOf(
+            loadTransactions(
+                context
+            ).toList()
+        )
+    }
 
 
     var descriptionText by remember {
@@ -2176,9 +1949,7 @@ fun ReceiptsScreen(
         rememberLazyListState()
 
 
-    LaunchedEffect(
-        transactions.size
-    ) {
+    LaunchedEffect(transactions.size) {
 
         if (
             recentTransactionIndices.isNotEmpty()
@@ -2230,14 +2001,8 @@ fun ReceiptsScreen(
 
         val enteredAmount =
             amountText
-                .replace(
-                    "£",
-                    ""
-                )
-                .replace(
-                    ",",
-                    ""
-                )
+                .replace("£", "")
+                .replace(",", "")
                 .trim()
                 .toDoubleOrNull()
 
@@ -2270,9 +2035,7 @@ fun ReceiptsScreen(
             recentTransactions.filter {
 
                 kotlin.math.abs(
-                    kotlin.math.abs(
-                        it.amount
-                    ) -
+                    kotlin.math.abs(it.amount) -
                             targetAmount
                 ) < 0.005
             }
@@ -2309,11 +2072,8 @@ fun ReceiptsScreen(
                         if (
                             matches.size == 1
                         ) {
-
                             ""
-
                         } else {
-
                             "s"
                         },
 
@@ -2328,13 +2088,7 @@ fun ReceiptsScreen(
             Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
-                .imePadding()
-                .padding(
-                    start = 20.dp,
-                    top = 10.dp,
-                    end = 20.dp,
-                    bottom = 10.dp
-                )
+                .padding(20.dp)
     ) {
 
         ScreenBackButton(
@@ -2447,6 +2201,32 @@ fun ReceiptsScreen(
         )
 
 
+        Button(
+            onClick = onBankSync,
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = HOMEHUB_SECONDARY,
+                    contentColor = HOMEHUB_PRIMARY
+                )
+        ) {
+            Text(
+                text = "SYNC VIRGIN MONEY"
+            )
+        }
+
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+
         /* ---------------- DESCRIPTION ---------------- */
 
         OutlinedTextField(
@@ -2494,21 +2274,11 @@ fun ReceiptsScreen(
 
                 amountText =
                     it
-                        .replace(
-                            "£",
-                            ""
-                        )
-                        .replace(
-                            "+",
-                            ""
-                        )
-                        .replace(
-                            "-",
-                            ""
-                        )
+                        .replace("£", "")
+                        .replace("+", "")
+                        .replace("-", "")
 
-                checkResult =
-                    null
+                checkResult = null
             },
 
             modifier =
@@ -2612,40 +2382,6 @@ fun ReceiptsScreen(
                             .bodyMedium
                 )
             }
-        }
-
-
-        Spacer(
-            modifier =
-                Modifier.height(6.dp)
-        )
-
-
-        /* ---------------- BANK IMPORT ---------------- */
-
-        Button(
-            onClick =
-                onBankImportClick,
-
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor =
-                        HOMEHUB_SECONDARY,
-
-                    contentColor =
-                        HOMEHUB_PRIMARY
-                )
-        ) {
-
-            Text(
-                text =
-                    "IMPORT BANK TRANSACTIONS"
-            )
         }
 
 
@@ -2834,10 +2570,15 @@ fun ReceiptsScreen(
                         updatedTransactions.indices
                     ) {
 
+                        /* UPDATE EXISTING */
+
+                        val existingTransaction =
+                            updatedTransactions[editingIndex]
+
                         updatedTransactions[
                             editingIndex
                         ] =
-                            AccountTransaction(
+                            existingTransaction.copy(
                                 description =
                                     descriptionText.trim(),
 
@@ -2845,17 +2586,16 @@ fun ReceiptsScreen(
                                     signedAmount,
 
                                 date =
-                                    updatedTransactions[
-                                        editingIndex
-                                    ].date,
-
-                                bankTransactionId =
-                                    updatedTransactions[
-                                        editingIndex
-                                    ].bankTransactionId
+                                    if (existingTransaction.date.isBlank()) {
+                                        LocalDate.now().toString()
+                                    } else {
+                                        existingTransaction.date
+                                    }
                             )
 
                     } else {
+
+                        /* ADD NEW */
 
                         updatedTransactions.add(
                             AccountTransaction(
@@ -2866,14 +2606,10 @@ fun ReceiptsScreen(
                                     signedAmount,
 
                                 date =
-                                    LocalDate.now().format(
-                                        DateTimeFormatter.ofPattern(
-                                            "dd/MM/yyyy"
-                                        )
-                                    ),
+                                    LocalDate.now().toString(),
 
-                                bankTransactionId =
-                                    ""
+                                source =
+                                    "MANUAL"
                             )
                         )
                     }
@@ -2885,9 +2621,8 @@ fun ReceiptsScreen(
                     )
 
 
-                    onTransactionsChanged(
+                    transactions =
                         updatedTransactions
-                    )
 
 
                     descriptionText =
@@ -3133,9 +2868,8 @@ fun ReceiptsScreen(
                                 )
 
 
-                                onTransactionsChanged(
+                                transactions =
                                     updatedTransactions
-                                )
 
 
                                 if (
@@ -3232,10 +2966,8 @@ fun ReceiptsScreen(
                             .apply()
 
 
-                        onTransactionsChanged(
+                        transactions =
                             emptyList()
-                        )
-
 
                         descriptionText =
                             ""
@@ -3281,1043 +3013,428 @@ fun ReceiptsScreen(
 
 
 /* -------------------------------------------------- */
-/* BANK IMPORT SCREEN                                 */
+/* BANK SYNC SCREEN                                   */
 /* -------------------------------------------------- */
 
+data class BankSyncPreview(
+    val transaction: BankTransaction,
+    val status: String,
+    val statusDetail: String
+)
+
+fun getBankSyncPreviewStatus(
+    transactions: List<AccountTransaction>,
+    bankTransaction: BankTransaction
+): BankSyncPreview {
+
+    val idMatch = transactions.any {
+        bankTransaction.id.isNotBlank() &&
+                it.bankTransactionId == bankTransaction.id
+    }
+
+    if (idMatch) {
+        return BankSyncPreview(
+            transaction = bankTransaction,
+            status = "ALREADY IMPORTED",
+            statusDetail = "This bank transaction ID is already in HomeHub. No new entry will be created."
+        )
+    }
+
+    val bankDescription = normaliseTransactionText(
+        bankTransaction.description
+    )
+
+    val exactMatch = transactions.any {
+        kotlin.math.abs(it.amount - bankTransaction.amount) < 0.005 &&
+                normaliseTransactionText(it.description) == bankDescription &&
+                it.date.isNotBlank() &&
+                it.date == bankTransaction.date
+    }
+
+    if (exactMatch) {
+        return BankSyncPreview(
+            transaction = bankTransaction,
+            status = "WILL LINK",
+            statusDetail = "An existing entry has the same date, description and amount. It will be linked to this bank transaction ID."
+        )
+    }
+
+    val legacyMatch = transactions.any {
+        kotlin.math.abs(it.amount - bankTransaction.amount) < 0.005 &&
+                normaliseTransactionText(it.description) == bankDescription &&
+                it.date.isBlank() &&
+                it.bankTransactionId.isBlank()
+    }
+
+    if (legacyMatch) {
+        return BankSyncPreview(
+            transaction = bankTransaction,
+            status = "WILL UPDATE",
+            statusDetail = "An older manual entry matches the description and amount but has no date or bank ID. It will be upgraded with the bank details."
+        )
+    }
+
+    return BankSyncPreview(
+        transaction = bankTransaction,
+        status = "NEW",
+        statusDetail = "No existing entry matches. A new transaction will be added."
+    )
+}
+
+
 @Composable
-fun BankImportScreen(
-    onBack: () -> Unit,
-
-    existingTransactions:
-    List<AccountTransaction>,
-
-    onImportComplete:
-        (List<BankTransaction>) -> Unit
+fun BankSyncScreen(
+    onBack: () -> Unit
 ) {
+
+    val context = LocalContext.current
 
     val keyboardController =
         LocalSoftwareKeyboardController.current
 
+    var bankTransactions by remember {
+        mutableStateOf<List<BankTransaction>>(emptyList())
+    }
+
+    var previewItems by remember {
+        mutableStateOf<List<BankSyncPreview>>(emptyList())
+    }
+
+    var syncMessage by remember {
+        mutableStateOf<String?>(null)
+    }
 
     var transactionCount by remember {
         mutableStateOf("10")
     }
 
-
-    var previewTransactions by remember {
-        mutableStateOf<List<BankTransaction>>(
-            emptyList()
-        )
-    }
-
-
-    var selectedTransactionIds by remember {
-        mutableStateOf<Set<String>>(emptySet())
-    }
-
-
-    var statusText by remember {
-        mutableStateOf<String?>(null)
-    }
-
-
-    fun getImportStatus(
-        bankTransaction:
-        BankTransaction
-    ): BankImportStatus {
-
-        /*
-         * FIRST:
-         *
-         * Exact bank ID match.
-         */
-        val alreadyExistsById =
-            bankTransaction.id.isNotBlank() &&
-                    existingTransactions.any {
-
-                        it.bankTransactionId.isNotBlank() &&
-
-                                it.bankTransactionId ==
-                                bankTransaction.id
-                    }
-
-
-        if (
-            alreadyExistsById
-        ) {
-
-            return BankImportStatus.ALREADY_EXISTS
-        }
-
-
-        /*
-         * SECOND:
-         *
-         * Exact date + description + amount match.
-         */
-        val exactMatch =
-            existingTransactions.any {
-
-                it.description.equals(
-                    bankTransaction.description,
-                    ignoreCase = true
-                ) &&
-
-                        kotlin.math.abs(
-                            it.amount -
-                                    bankTransaction.amount
-                        ) < 0.005 &&
-
-                        it.date ==
-                        bankTransaction.date
-            }
-
-
-        if (
-            exactMatch
-        ) {
-
-            return BankImportStatus.ALREADY_EXISTS
-        }
-
-
-        /*
-         * THIRD:
-         *
-         * Legacy manual entry with no date and no
-         * bank ID, but matching description + amount.
-         */
-        val legacyManualMatch =
-            existingTransactions.any {
-
-                it.date.isBlank() &&
-
-                        it.bankTransactionId.isBlank() &&
-
-                        it.description.equals(
-                            bankTransaction.description,
-                            ignoreCase = true
-                        ) &&
-
-                        kotlin.math.abs(
-                            it.amount -
-                                    bankTransaction.amount
-                        ) < 0.005
-            }
-
-
-        if (
-            legacyManualMatch
-        ) {
-
-            return BankImportStatus.MATCHED_TO_MANUAL
-        }
-
-
-        return BankImportStatus.NEW
-    }
-
-
-    fun readTestBankTransactions() {
-
-        val requestedCount =
-            transactionCount
-                .trim()
-                .toIntOrNull()
-                ?.coerceIn(
-                    1,
-                    100
-                )
-
-
-        if (
-            requestedCount == null
-        ) {
-
-            statusText =
-                "Enter a number between 1 and 100."
-
-            return
-        }
-
-
-        /*
-         * TEST DATA ONLY.
-         *
-         * This is the part we will eventually
-         * replace with the real bank feed.
-         */
-        val testTransactions =
-            listOf(
-
-                BankTransaction(
-                    id =
-                        "TEST-001",
-
-                    date =
-                        "23/09/2026",
-
-                    description =
-                        "Tesco",
-
-                    amount =
-                        -42.17
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-002",
-
-                    date =
-                        "23/09/2026",
-
-                    description =
-                        "Salary",
-
-                    amount =
-                        2450.00
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-003",
-
-                    date =
-                        "22/09/2026",
-
-                    description =
-                        "Amazon",
-
-                    amount =
-                        -18.99
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-004",
-
-                    date =
-                        "21/09/2026",
-
-                    description =
-                        "Shell",
-
-                    amount =
-                        -55.00
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-005",
-
-                    date =
-                        "20/09/2026",
-
-                    description =
-                        "Greggs",
-
-                    amount =
-                        -6.25
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-006",
-
-                    date =
-                        "19/09/2026",
-
-                    description =
-                        "Tesco",
-
-                    amount =
-                        -31.42
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-007",
-
-                    date =
-                        "18/09/2026",
-
-                    description =
-                        "Netflix",
-
-                    amount =
-                        -17.99
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-008",
-
-                    date =
-                        "17/09/2026",
-
-                    description =
-                        "Leeds City Council",
-
-                    amount =
-                        -145.00
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-009",
-
-                    date =
-                        "16/09/2026",
-
-                    description =
-                        "BP",
-
-                    amount =
-                        -48.20
-                ),
-
-                BankTransaction(
-                    id =
-                        "TEST-010",
-
-                    date =
-                        "15/09/2026",
-
-                    description =
-                        "Morrisons",
-
-                    amount =
-                        -72.31
-                )
-            )
-
-
-        previewTransactions =
-            testTransactions
-                .take(
-                    requestedCount
-                )
-
-
-        /*
-         * Automatically select NEW transactions.
-         *
-         * Existing/matched transactions are shown
-         * but aren't selected by default.
-         */
-        selectedTransactionIds =
-            previewTransactions
-                .filter {
-                    getImportStatus(it) ==
-                            BankImportStatus.NEW
-                }
-                .map {
-                    it.id
-                }
-                .toSet()
-
-
-        val newCount =
-            previewTransactions.count {
-                getImportStatus(it) ==
-                        BankImportStatus.NEW
-            }
-
-
-        val alreadyExistsCount =
-            previewTransactions.count {
-                getImportStatus(it) ==
-                        BankImportStatus.ALREADY_EXISTS
-            }
-
-
-        val matchedCount =
-            previewTransactions.count {
-                getImportStatus(it) ==
-                        BankImportStatus.MATCHED_TO_MANUAL
-            }
-
-
-        statusText =
-            "${previewTransactions.size} loaded • " +
-                    "$newCount new • " +
-                    "$alreadyExistsCount already exists • " +
-                    "$matchedCount matched to manual"
-    }
-
-
-    val selectedCount =
-        previewTransactions.count {
-            selectedTransactionIds.contains(
-                it.id
-            )
-        }
-
-
-    val newCount =
-        previewTransactions.count {
-            getImportStatus(it) ==
-                    BankImportStatus.NEW
-        }
-
-
-    val alreadyExistsCount =
-        previewTransactions.count {
-            getImportStatus(it) ==
-                    BankImportStatus.ALREADY_EXISTS
-        }
-
-
-    val matchedCount =
-        previewTransactions.count {
-            getImportStatus(it) ==
-                    BankImportStatus.MATCHED_TO_MANUAL
-        }
-
-
     Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(20.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(20.dp)
     ) {
 
-        ScreenBackButton(
-            onBack =
-                onBack
-        )
-
-
-        Spacer(
-            modifier =
-                Modifier.height(8.dp)
-        )
-
+        ScreenBackButton(onBack = onBack)
 
         Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            horizontalArrangement =
-                Arrangement.Center
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
         ) {
-
             Text(
-                text =
-                    "🏦",
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .displayLarge
+                text = "Virgin Money Sync",
+                style = MaterialTheme.typography.headlineMedium
             )
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
 
-        Spacer(
-            modifier =
-                Modifier.height(6.dp)
-        )
-
-
-        Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            horizontalArrangement =
-                Arrangement.Center
-        ) {
-
-            Text(
-                text =
-                    "Bank Transactions",
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .headlineMedium
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White,
+                contentColor = HOMEHUB_TEXT
             )
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text(
+                    text = "Bank sync test",
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "This screen currently uses a test bank feed. Nothing is changed in HomeHub when you fetch the transactions. Review the action shown for each transaction before importing.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
 
-
-        Spacer(
-            modifier =
-                Modifier.height(20.dp)
-        )
-
+        Spacer(modifier = Modifier.height(10.dp))
 
         OutlinedTextField(
-            value =
-                transactionCount,
-
-            onValueChange = {
-
-                transactionCount =
-                    it.filter { character ->
-                        character.isDigit()
-                    }
+            value = transactionCount,
+            onValueChange = { value ->
+                transactionCount = value.filter { it.isDigit() }
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            label = {
-                Text(
-                    "Number of transactions"
-                )
-            },
-
-            singleLine =
-                true,
-
-            keyboardOptions =
-                KeyboardOptions(
-                    keyboardType =
-                        KeyboardType.Number
-                )
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Number of transactions to review") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number
+            )
         )
 
-
-        Spacer(
-            modifier =
-                Modifier.height(10.dp)
-        )
-
+        Spacer(modifier = Modifier.height(8.dp))
 
         Button(
             onClick = {
-
-                readTestBankTransactions()
-
                 keyboardController?.hide()
+
+                val count =
+                    transactionCount.toIntOrNull()?.coerceAtLeast(1)
+
+                if (count == null) {
+                    syncMessage = "Enter a valid number of transactions to review."
+                    return@Button
+                }
+
+                val existing = loadTransactions(context)
+                bankTransactions = fakeBankTransactions(
+                    existing,
+                    count
+                )
+                previewItems = bankTransactions.map {
+                    getBankSyncPreviewStatus(existing, it)
+                }
+                syncMessage = "Fetched ${bankTransactions.size} bank transaction(s). Review what will happen below before importing."
             },
-
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(55.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
         ) {
-
-            Text(
-                text =
-                    "READ BANK TRANSACTIONS"
-            )
+            Text("FETCH TRANSACTIONS")
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
 
-        if (
-            statusText != null
-        ) {
+        if (previewItems.isNotEmpty()) {
 
-            Spacer(
-                modifier =
-                    Modifier.height(10.dp)
-            )
-
-
-            Text(
-                text =
-                    statusText!!,
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .bodyMedium
-            )
-        }
-
-
-        if (
-            previewTransactions.isNotEmpty()
-        ) {
-
-            Spacer(
-                modifier =
-                    Modifier.height(10.dp)
-            )
-
-
-            Row(
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                horizontalArrangement =
-                    Arrangement.spacedBy(8.dp)
-            ) {
-
-                ImportSummaryCard(
-                    label =
-                        "NEW",
-
-                    count =
-                        newCount,
-
-                    modifier =
-                        Modifier.weight(1f)
-                )
-
-
-                ImportSummaryCard(
-                    label =
-                        "EXISTS",
-
-                    count =
-                        alreadyExistsCount,
-
-                    modifier =
-                        Modifier.weight(1f)
-                )
-
-
-                ImportSummaryCard(
-                    label =
-                        "MATCHED",
-
-                    count =
-                        matchedCount,
-
-                    modifier =
-                        Modifier.weight(1f)
-                )
+            val alreadyImported = previewItems.count {
+                it.status == "ALREADY IMPORTED"
             }
 
+            val willLink = previewItems.count {
+                it.status == "WILL LINK"
+            }
 
-            Spacer(
-                modifier =
-                    Modifier.height(10.dp)
-            )
+            val willUpdate = previewItems.count {
+                it.status == "WILL UPDATE"
+            }
 
+            val newCount = previewItems.count {
+                it.status == "NEW"
+            }
 
-            Row(
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                verticalAlignment =
-                    Alignment.CenterVertically
-            ) {
-
-                Text(
-                    text =
-                        "$selectedCount selected",
-
-                    style =
-                        MaterialTheme
-                            .typography
-                            .titleMedium,
-
-                    modifier =
-                        Modifier.weight(1f)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = HOMEHUB_TEXT
                 )
-
-
-                TextButton(
-                    onClick = {
-
-                        selectedTransactionIds =
-                            previewTransactions
-                                .filter {
-                                    getImportStatus(it) ==
-                                            BankImportStatus.NEW
-                                }
-                                .map {
-                                    it.id
-                                }
-                                .toSet()
-                    }
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp)
                 ) {
+                    Text(
+                        text = "IMPORT PREVIEW",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text =
-                            "SELECT NEW"
+                        text = "$newCount NEW  •  $willLink WILL LINK  •  $willUpdate WILL UPDATE  •  $alreadyImported ALREADY IMPORTED",
+                        style = MaterialTheme.typography.bodyMedium
                     )
-                }
 
-
-                TextButton(
-                    onClick = {
-
-                        selectedTransactionIds =
-                            emptySet()
-                    }
-                ) {
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text =
-                            "CLEAR"
+                        text = "Only NEW / WILL LINK / WILL UPDATE records will change your saved transactions. ALREADY IMPORTED records will be skipped.",
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
 
-
-            Spacer(
-                modifier =
-                    Modifier.height(4.dp)
-            )
-
-
-            LazyColumn(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(8.dp)
-            ) {
-
-                items(
-                    previewTransactions,
-                    key = {
-                        it.id
-                    }
-                ) { transaction ->
-
-                    val importStatus =
-                        getImportStatus(
-                            transaction
-                        )
-
-
-                    val isSelected =
-                        selectedTransactionIds.contains(
-                            transaction.id
-                        )
-
-
-                    BankImportTransactionRow(
-                        transaction =
-                            transaction,
-
-                        status =
-                            importStatus,
-
-                        selected =
-                            isSelected,
-
-                        onSelectedChanged = {
-
-                            selectedTransactionIds =
-                                if (
-                                    isSelected
-                                ) {
-
-                                    selectedTransactionIds -
-                                            transaction.id
-
-                                } else {
-
-                                    selectedTransactionIds +
-                                            transaction.id
-                                }
-                        }
-                    )
-                }
-            }
-
-
-            Spacer(
-                modifier =
-                    Modifier.height(10.dp)
-            )
-
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
+                    val existing = loadTransactions(context).toMutableList()
+                    var imported = 0
+                    var matched = 0
+                    var skipped = 0
 
-                    val selectedTransactions =
-                        previewTransactions.filter {
-                            selectedTransactionIds.contains(
-                                it.id
+                    bankTransactions.forEach { bankTransaction ->
+                        val matchIndex =
+                            findMatchingTransactionIndex(
+                                existing,
+                                bankTransaction
                             )
+
+                        if (matchIndex != null) {
+                            val existingTransaction = existing[matchIndex]
+
+                            if (
+                                bankTransaction.id.isNotBlank() &&
+                                existingTransaction.bankTransactionId == bankTransaction.id
+                            ) {
+                                skipped++
+                            } else {
+                                existing[matchIndex] =
+                                    existingTransaction.copy(
+                                        description = bankTransaction.description,
+                                        amount = bankTransaction.amount,
+                                        date = bankTransaction.date,
+                                        source = if (existingTransaction.source == "MANUAL") {
+                                            "MATCHED"
+                                        } else {
+                                            "BANK"
+                                        },
+                                        bankTransactionId = bankTransaction.id
+                                    )
+
+                                matched++
+                            }
+                        } else {
+                            existing.add(
+                                AccountTransaction(
+                                    description = bankTransaction.description,
+                                    amount = bankTransaction.amount,
+                                    date = bankTransaction.date,
+                                    source = "BANK",
+                                    bankTransactionId = bankTransaction.id
+                                )
+                            )
+                            imported++
                         }
+                    }
 
+                    saveTransactions(context, existing)
 
-                    if (
-                        selectedTransactions.isEmpty()
-                    ) {
+                    syncMessage =
+                        "Import complete: $imported new, $matched linked/updated, $skipped already imported and skipped."
 
-                        statusText =
-                            "Nothing selected to import."
-
-                    } else {
-
-                        onImportComplete(
-                            selectedTransactions
-                        )
+                    previewItems = bankTransactions.map {
+                        getBankSyncPreviewStatus(existing, it)
                     }
                 },
-
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(55.dp),
-
-                enabled =
-                    selectedCount > 0
-            ) {
-
-                Text(
-                    text =
-                        "IMPORT SELECTED ($selectedCount)"
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HOMEHUB_SECONDARY,
+                    contentColor = HOMEHUB_PRIMARY
                 )
+            ) {
+                Text("IMPORT / UPSERT")
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = "What will happen to each transaction",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(previewItems) { preview ->
+                    val transaction = preview.transaction
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White,
+                            contentColor = HOMEHUB_TEXT
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = transaction.description,
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+
+                                    Text(
+                                        text = transaction.date,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+
+                                Text(
+                                    text = formatSignedMoney(transaction.amount),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (transaction.amount >= 0) {
+                                        HOMEHUB_INCOME
+                                    } else {
+                                        HOMEHUB_OUTGOING
+                                    }
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text(
+                                text = preview.status,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = when (preview.status) {
+                                    "NEW" -> HOMEHUB_PRIMARY
+                                    "ALREADY IMPORTED" -> HOMEHUB_INCOME
+                                    "WILL LINK" -> HOMEHUB_INCOME
+                                    "WILL UPDATE" -> HOMEHUB_PRIMARY
+                                    else -> HOMEHUB_TEXT
+                                }
+                            )
+
+                            Text(
+                                text = preview.statusDetail,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
             }
 
         } else {
-
-            Spacer(
-                modifier =
-                    Modifier.weight(1f)
-            )
-
-
-            Text(
-                text =
-                    "No bank transactions loaded yet.",
-
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                textAlign =
-                    TextAlign.Center,
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .bodyLarge
-            )
-
-
-            Spacer(
-                modifier =
-                    Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-
-/* -------------------------------------------------- */
-/* IMPORT SUMMARY CARD                                */
-/* -------------------------------------------------- */
-
-@Composable
-fun ImportSummaryCard(
-    label: String,
-    count: Int,
-    modifier: Modifier = Modifier
-) {
-
-    Card(
-        modifier =
-            modifier,
-
-        shape =
-            RoundedCornerShape(12.dp),
-
-        colors =
-            CardDefaults.cardColors(
-                containerColor =
-                    Color.White,
-
-                contentColor =
-                    HOMEHUB_TEXT
-            )
-    ) {
-
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-
-            horizontalAlignment =
-                Alignment.CenterHorizontally
-        ) {
-
-            Text(
-                text =
-                    count.toString(),
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .titleLarge
-            )
-
-
-            Text(
-                text =
-                    label,
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .bodySmall
-            )
-        }
-    }
-}
-
-
-/* -------------------------------------------------- */
-/* BANK IMPORT TRANSACTION ROW                        */
-/* -------------------------------------------------- */
-
-@Composable
-fun BankImportTransactionRow(
-    transaction:
-    BankTransaction,
-
-    status:
-    BankImportStatus,
-
-    selected:
-    Boolean,
-
-    onSelectedChanged:
-        () -> Unit
-) {
-
-    val statusText =
-        when (status) {
-
-            BankImportStatus.NEW ->
-                "NEW"
-
-            BankImportStatus.ALREADY_EXISTS ->
-                "ALREADY EXISTS"
-
-            BankImportStatus.MATCHED_TO_MANUAL ->
-                "MATCHED TO MANUAL"
-        }
-
-
-    Card(
-        modifier =
-            Modifier.fillMaxWidth(),
-
-        shape =
-            RoundedCornerShape(14.dp),
-
-        colors =
-            CardDefaults.cardColors(
-                containerColor =
-                    Color.White,
-
-                contentColor =
-                    HOMEHUB_TEXT
-            )
-    ) {
-
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onSelectedChanged()
-                    }
-                    .padding(10.dp),
-
-            verticalAlignment =
-                Alignment.CenterVertically
-        ) {
-
-            Checkbox(
-                checked =
-                    selected,
-
-                onCheckedChange = {
-                    onSelectedChanged()
-                },
-
-                enabled =
-                    status ==
-                            BankImportStatus.NEW
-            )
-
-
-            Spacer(
-                modifier =
-                    Modifier.size(4.dp)
-            )
-
-
             Column(
-                modifier =
-                    Modifier.weight(1f)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Top
             ) {
-
                 Text(
-                    text =
-                        transaction.date,
-
-                    style =
-                        MaterialTheme
-                            .typography
-                            .bodySmall
-                )
-
-
-                Text(
-                    text =
-                        transaction.description,
-
-                    style =
-                        MaterialTheme
-                            .typography
-                            .titleMedium
-                )
-
-
-                Text(
-                    text =
-                        statusText,
-
-                    style =
-                        MaterialTheme
-                            .typography
-                            .bodySmall,
-
-                    color =
-                        when (status) {
-
-                            BankImportStatus.NEW ->
-                                HOMEHUB_PRIMARY
-
-                            BankImportStatus.ALREADY_EXISTS ->
-                                HOMEHUB_OUTGOING
-
-                            BankImportStatus.MATCHED_TO_MANUAL ->
-                                HOMEHUB_INCOME
-                        }
+                    text = "Nothing fetched yet.",
+                    style = MaterialTheme.typography.bodyLarge
                 )
             }
+        }
 
+        if (syncMessage != null) {
+            Spacer(modifier = Modifier.height(8.dp))
 
-            Text(
-                text =
-                    formatSignedMoney(
-                        transaction.amount
-                    ),
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .titleMedium,
-
-                color =
-                    if (
-                        transaction.amount >= 0
-                    ) {
-
-                        HOMEHUB_INCOME
-
-                    } else {
-
-                        HOMEHUB_OUTGOING
-                    }
-            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.White,
+                    contentColor = HOMEHUB_TEXT
+                )
+            ) {
+                Text(
+                    text = syncMessage!!,
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
     }
 }
@@ -4329,17 +3446,10 @@ fun BankImportTransactionRow(
 
 @Composable
 fun AccountTransactionRow(
-    transaction:
-    AccountTransaction,
-
-    balanceAfter:
-    Double,
-
-    onEdit:
-        () -> Unit,
-
-    onDelete:
-        () -> Unit
+    transaction: AccountTransaction,
+    balanceAfter: Double,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
 ) {
 
     var showDeleteConfirmation by remember {
@@ -4400,6 +3510,13 @@ fun AccountTransactionRow(
                     )
 
 
+                    if (transaction.date.isNotBlank()) {
+                        Text(
+                            text = transaction.date,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
                     Text(
                         text =
                             formatSignedMoney(
@@ -4423,22 +3540,6 @@ fun AccountTransactionRow(
                                 HOMEHUB_OUTGOING
                             }
                     )
-
-
-                    if (
-                        transaction.date.isNotBlank()
-                    ) {
-
-                        Text(
-                            text =
-                                transaction.date,
-
-                            style =
-                                MaterialTheme
-                                    .typography
-                                    .bodySmall
-                        )
-                    }
                 }
 
 
@@ -5174,7 +4275,6 @@ fun NotesScreen(
         )
     }
 }
-
 
 /* -------------------------------------------------- */
 /* NOTE ENTRY                                         */
