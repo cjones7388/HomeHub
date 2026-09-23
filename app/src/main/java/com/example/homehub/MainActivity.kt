@@ -3712,6 +3712,11 @@ fun BankSyncScreen(
     var showApiKeyEntry by remember { mutableStateOf(!apiKeySaved) }
     var showImportCompleteDialog by remember { mutableStateOf(false) }
     var showClearApiKeyDialog by remember { mutableStateOf(false) }
+    var showManualLinkDialog by remember { mutableStateOf(false) }
+    var manualLinkBankId by remember { mutableStateOf<String?>(null) }
+    var manualLinkCandidates by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var manualLinkSelections by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var manualTransactions by remember { mutableStateOf<List<AccountTransaction>>(emptyList()) }
 
     LazyColumn(
         modifier = Modifier
@@ -3943,13 +3948,19 @@ fun BankSyncScreen(
                             context.mainExecutor.execute {
                                 bankTransactions = fetched
                                 previewItems = preview
+                                manualTransactions = existing
                                 selectedBankIds = initiallySelected
+                                manualLinkBankId = null
+                                manualLinkCandidates = emptyList()
+                                manualLinkSelections = emptyMap()
+                                showManualLinkDialog = false
                                 syncMessage = "Fetched ${fetched.size} transaction(s) from Endute. Review the selections below before importing."
                             }
                         } catch (e: Exception) {
                             context.mainExecutor.execute {
                                 bankTransactions = emptyList()
                                 previewItems = emptyList()
+                                manualTransactions = emptyList()
                                 selectedBankIds = emptySet()
                                 syncMessage = e.message ?: "Endute error: Unknown error"
                             }
@@ -3985,8 +3996,14 @@ fun BankSyncScreen(
 
         if (previewItems.isNotEmpty()) {
             val alreadyImported = previewItems.count { previewItem -> previewItem.status == "ALREADY IMPORTED" }
-            val willLink = previewItems.count { previewItem -> previewItem.status == "WILL LINK" }
-            val newCount = previewItems.count { previewItem -> previewItem.status == "NEW" }
+            val willLink = previewItems.count { previewItem ->
+                previewItem.status == "WILL LINK" ||
+                        manualLinkSelections.containsKey(previewItem.transaction.id)
+            }
+            val newCount = previewItems.count { previewItem ->
+                previewItem.status == "NEW" &&
+                        !manualLinkSelections.containsKey(previewItem.transaction.id)
+            }
             val selectableItems = previewItems.filter { previewItem ->
                 previewItem.status != "ALREADY IMPORTED" && previewItem.transaction.id.isNotBlank()
             }
@@ -4089,17 +4106,32 @@ fun BankSyncScreen(
 
                             selectedProcessed++
 
-                            when (previewItem.status) {
-                                "ALREADY IMPORTED" -> skipped++
+                            val manuallySelectedIndex = manualLinkSelections[bankTransaction.id]
 
-                                "WILL LINK" -> {
+                            when {
+                                previewItem.status == "ALREADY IMPORTED" -> {
+                                    skipped++
+                                }
+
+                                manuallySelectedIndex != null && manuallySelectedIndex in existing.indices -> {
+                                    val existingTransaction = existing[manuallySelectedIndex]
+                                    existing[manuallySelectedIndex] = existingTransaction.copy(
+                                        source = if (existingTransaction.source == "MANUAL") {
+                                            "MATCHED"
+                                        } else {
+                                            existingTransaction.source
+                                        },
+                                        bankTransactionId = bankTransaction.id,
+                                        upstreamBankTransactionId = bankTransaction.upstreamTransactionId
+                                    )
+                                    matched++
+                                }
+
+                                previewItem.status == "WILL LINK" -> {
                                     val matchIndex = previewItem.existingIndex
                                     if (matchIndex != null && matchIndex in existing.indices) {
                                         val existingTransaction = existing[matchIndex]
                                         existing[matchIndex] = existingTransaction.copy(
-                                            date = bankTransaction.date.ifBlank {
-                                                existingTransaction.date
-                                            },
                                             source = if (existingTransaction.source == "MANUAL") {
                                                 "MATCHED"
                                             } else {
@@ -4124,7 +4156,7 @@ fun BankSyncScreen(
                                     }
                                 }
 
-                                "NEW" -> {
+                                else -> {
                                     existing.add(
                                         AccountTransaction(
                                             description = bankTransaction.description,
@@ -4148,7 +4180,9 @@ fun BankSyncScreen(
                         )
 
                         previewItems = refreshedPreview
+                        manualTransactions = existing
                         selectedBankIds = emptySet()
+                        manualLinkSelections = emptyMap()
                         syncMessage = "Upsert complete: $imported new, $matched linked, $skipped already imported. $selectedProcessed selected transaction(s) processed; unselected transactions were left untouched."
                         showImportCompleteDialog = true
                     },
@@ -4175,6 +4209,10 @@ fun BankSyncScreen(
                 val transaction = previewItem.transaction
                 val isAlreadyImported = previewItem.status == "ALREADY IMPORTED"
                 val isSelected = transaction.id in selectedBankIds
+                val manualLinkIndex = manualLinkSelections[transaction.id]
+                val linkedManualDescription = manualLinkIndex?.let { index ->
+                    manualTransactions.getOrNull(index)?.description
+                }
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -4184,52 +4222,106 @@ fun BankSyncScreen(
                         contentColor = HOMEHUB_TEXT
                     )
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(10.dp)
                     ) {
-                        Checkbox(
-                            checked = isSelected,
-                            enabled = !isAlreadyImported && transaction.id.isNotBlank(),
-                            onCheckedChange = { checked ->
-                                selectedBankIds = if (checked) {
-                                    selectedBankIds + transaction.id
-                                } else {
-                                    selectedBankIds - transaction.id
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isSelected,
+                                enabled = !isAlreadyImported && transaction.id.isNotBlank(),
+                                onCheckedChange = { checked ->
+                                    selectedBankIds = if (checked) {
+                                        selectedBankIds + transaction.id
+                                    } else {
+                                        selectedBankIds - transaction.id
+                                    }
                                 }
-                            }
-                        )
+                            )
 
-                        Column(modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = transaction.description.ifBlank { "(No description)" },
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                                Text(
+                                    text = transaction.date,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = when {
+                                        isAlreadyImported -> "ALREADY IMPORTED"
+                                        manualLinkIndex != null -> "LINKED TO EXISTING"
+                                        previewItem.status == "WILL LINK" -> "WILL LINK"
+                                        else -> "NEW"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+
                             Text(
-                                text = transaction.description.ifBlank { "(No description)" },
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = transaction.date,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = when (previewItem.status) {
-                                    "ALREADY IMPORTED" -> "ALREADY IMPORTED"
-                                    "WILL LINK" -> "WILL LINK"
-                                    else -> "NEW"
-                                },
-                                style = MaterialTheme.typography.bodySmall
+                                text = formatSignedMoney(transaction.amount),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (transaction.amount >= 0) {
+                                    HOMEHUB_INCOME
+                                } else {
+                                    HOMEHUB_OUTGOING
+                                }
                             )
                         }
 
-                        Text(
-                            text = formatSignedMoney(transaction.amount),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (transaction.amount >= 0) {
-                                HOMEHUB_INCOME
-                            } else {
-                                HOMEHUB_OUTGOING
+                        if (!isAlreadyImported && transaction.id.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            if (linkedManualDescription != null) {
+                                Text(
+                                    text = "Linked to: $linkedManualDescription",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
-                        )
+
+                            TextButton(
+                                onClick = {
+                                    val existingTransactions = manualTransactions
+                                    val usedManualIndices = manualLinkSelections
+                                        .filterKeys { bankId -> bankId != transaction.id }
+                                        .values
+                                        .toSet()
+                                    val autoLinkedIndices = previewItems
+                                        .filter { other ->
+                                            other.transaction.id != transaction.id &&
+                                                    other.status == "WILL LINK" &&
+                                                    other.existingIndex != null
+                                        }
+                                        .mapNotNull { other -> other.existingIndex }
+                                        .toSet()
+
+                                    manualLinkCandidates = existingTransactions.indices
+                                        .filter { index ->
+                                            val candidate = existingTransactions[index]
+                                            index !in usedManualIndices &&
+                                                    index !in autoLinkedIndices &&
+                                                    candidate.bankTransactionId.isBlank() &&
+                                                    candidate.upstreamBankTransactionId.isBlank() &&
+                                                    kotlin.math.abs(candidate.amount - transaction.amount) < 0.005
+                                        }
+                                    manualLinkBankId = transaction.id
+                                    showManualLinkDialog = true
+                                }
+                            ) {
+                                Text(
+                                    if (linkedManualDescription != null) {
+                                        "CHANGE LINK"
+                                    } else {
+                                        "LINK TO EXISTING"
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -4248,6 +4340,71 @@ fun BankSyncScreen(
                 }
             }
         }
+    }
+
+    if (showManualLinkDialog) {
+        val bankId = manualLinkBankId
+        val bankTransaction = previewItems.firstOrNull { previewItem ->
+            previewItem.transaction.id == bankId
+        }?.transaction
+        val existingTransactions = manualTransactions
+
+        AlertDialog(
+            onDismissRequest = { showManualLinkDialog = false },
+            title = { Text("Link to existing transaction") },
+            text = {
+                Column {
+                    if (bankTransaction != null) {
+                        Text(
+                            text = "${bankTransaction.description.ifBlank { "(No description)" }}  ${formatSignedMoney(bankTransaction.amount)}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    if (manualLinkCandidates.isEmpty()) {
+                        Text("No unlinked HomeHub transaction with the same amount was found.")
+                    } else {
+                        Text(
+                            text = "Choose the HomeHub transaction this bank transaction represents:",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        manualLinkCandidates.forEach { candidateIndex ->
+                            val candidate = existingTransactions.getOrNull(candidateIndex)
+                            if (candidate != null) {
+                                TextButton(
+                                    onClick = {
+                                        if (bankId != null) {
+                                            manualLinkSelections = manualLinkSelections + (bankId to candidateIndex)
+                                            selectedBankIds = selectedBankIds + bankId
+                                        }
+                                        showManualLinkDialog = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = Alignment.Start
+                                    ) {
+                                        Text(candidate.description.ifBlank { "(No description)" })
+                                        Text(
+                                            text = "${candidate.date}  ${formatSignedMoney(candidate.amount)}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showManualLinkDialog = false }) {
+                    Text("CANCEL")
+                }
+            }
+        )
     }
 
     if (showClearApiKeyDialog) {
