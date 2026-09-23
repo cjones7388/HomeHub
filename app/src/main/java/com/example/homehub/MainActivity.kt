@@ -1195,13 +1195,14 @@ fun HomeCard(
 
 @Composable
 fun ScreenBackButton(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    size: androidx.compose.ui.unit.Dp = 90.dp
 ) {
 
     Box(
         modifier =
             Modifier
-                .size(90.dp)
+                .size(size)
                 .clickable {
                     onBack()
                 },
@@ -2353,44 +2354,35 @@ fun ReceiptsScreen(
             Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
-                .padding(20.dp)
+                .padding(12.dp)
     ) {
 
-        ScreenBackButton(
-            onBack =
-                onBack
-        )
-
-
-        Spacer(
-            modifier =
-                Modifier.height(2.dp)
-        )
-
-
         Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            horizontalArrangement =
-                Arrangement.Center
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-
-            Text(
-                text =
-                    "Receipts",
-
-                style =
-                    MaterialTheme
-                        .typography
-                        .headlineMedium
+            ScreenBackButton(
+                onBack = onBack,
+                size = 56.dp
             )
+
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Receipts",
+                    style = MaterialTheme.typography.headlineMedium
+                )
+            }
+
+            Spacer(modifier = Modifier.size(56.dp))
         }
 
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -2424,7 +2416,7 @@ fun ReceiptsScreen(
                         .fillMaxWidth()
                         .padding(
                             horizontal = 14.dp,
-                            vertical = 8.dp
+                            vertical = 4.dp
                         ),
 
                 verticalAlignment =
@@ -2472,7 +2464,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(50.dp),
+                    .height(44.dp),
 
             colors =
                 ButtonDefaults.buttonColors(
@@ -2488,7 +2480,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(8.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -2525,7 +2517,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(6.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -2583,7 +2575,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(45.dp),
+                    .height(40.dp),
 
             colors =
                 ButtonDefaults.buttonColors(
@@ -2652,7 +2644,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(6.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -2674,7 +2666,7 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .weight(1f)
-                        .height(50.dp),
+                        .height(44.dp),
 
                 colors =
                     ButtonDefaults.buttonColors(
@@ -2729,7 +2721,7 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .weight(1f)
-                        .height(50.dp),
+                        .height(44.dp),
 
                 colors =
                     ButtonDefaults.buttonColors(
@@ -2779,7 +2771,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(6.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -2910,7 +2902,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .height(44.dp)
         ) {
 
             Text(
@@ -3012,7 +3004,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(6.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -3026,7 +3018,7 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .weight(2f),
+                        .weight(1f),
 
                 horizontalAlignment =
                     Alignment.CenterHorizontally,
@@ -3055,10 +3047,10 @@ fun ReceiptsScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .weight(2f),
+                        .weight(1f),
 
                 verticalArrangement =
-                    Arrangement.spacedBy(8.dp)
+                    Arrangement.spacedBy(4.dp)
             ) {
 
                 items(
@@ -3164,7 +3156,7 @@ fun ReceiptsScreen(
 
         Spacer(
             modifier =
-                Modifier.height(6.dp)
+                Modifier.height(4.dp)
         )
 
 
@@ -3178,7 +3170,7 @@ fun ReceiptsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .height(44.dp)
         ) {
 
             Text(
@@ -4501,7 +4493,7 @@ fun AccountTransactionRow(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(10.dp)
+                    .padding(6.dp)
         ) {
 
             Row(
@@ -4594,7 +4586,7 @@ fun AccountTransactionRow(
 
             Spacer(
                 modifier =
-                    Modifier.height(2.dp)
+                    Modifier.height(0.dp)
             )
 
 
@@ -4609,6 +4601,8 @@ fun AccountTransactionRow(
                 TextButton(
                     onClick =
                         onEdit,
+
+                    modifier = Modifier.height(36.dp),
 
                     colors =
                         ButtonDefaults.textButtonColors(
@@ -4628,6 +4622,8 @@ fun AccountTransactionRow(
                     onClick = {
                         showDeleteConfirmation = true
                     },
+
+                    modifier = Modifier.height(36.dp),
 
                     colors =
                         ButtonDefaults.textButtonColors(
