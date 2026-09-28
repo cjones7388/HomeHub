@@ -555,28 +555,33 @@ class MainActivity : ComponentActivity() {
                             val today =
                                 LocalDate.now()
 
+                            val monday =
+                                today.with(DayOfWeek.MONDAY)
 
-                            val lastDay =
-                                today
-                                    .withDayOfMonth(1)
-                                    .lengthOfMonth()
-
-
-                            if (
-                                dueDay > lastDay
-                            ) {
-
-                                continue
-                            }
-
+                            val sunday =
+                                monday.plusDays(6)
 
                             val dueDate =
-                                LocalDate.of(
-                                    today.year,
-                                    today.month,
-                                    dueDay
+                                sequenceOf(
+                                    monday.withDayOfMonth(
+                                        minOf(
+                                            dueDay,
+                                            monday.lengthOfMonth()
+                                        )
+                                    ),
+                                    sunday.withDayOfMonth(
+                                        minOf(
+                                            dueDay,
+                                            sunday.lengthOfMonth()
+                                        )
+                                    )
                                 )
-
+                                    .filter {
+                                        !it.isBefore(monday) &&
+                                                !it.isAfter(sunday)
+                                    }
+                                    .firstOrNull()
+                                    ?: continue
 
                             bills.add(
                                 Bill(
