@@ -1,4 +1,7 @@
 package com.example.homehub
+import android.content.ClipData
+import android.content.ClipboardManager
+import java.util.Locale
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -2395,7 +2398,13 @@ fun ReceiptsScreen(
 
         Card(
             modifier =
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth()
+                    .clickable {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val amount = String.format(Locale.US, "%.2f", runningBalance)
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Balance", amount))
+                        Toast.makeText(context, "Balance copied", Toast.LENGTH_SHORT).show()
+                    },
 
             shape =
                 RoundedCornerShape(14.dp),
